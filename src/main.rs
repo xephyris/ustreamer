@@ -3,6 +3,7 @@
 use turbojpeg::compress;
 use turbojpeg::Image;
 use turbojpeg::Subsamp;
+use ustreamer::rk_mpp;
 use v4l2r::{device::{DeviceConfig, Device, queue::Queue}, ioctl::{self, mmap, qbuf, reqbufs, GFmtError, MemoryConsistency, RequestBuffers, V4l2Buffer}, memory::MemoryType, Format, PixelFormat, QueueType,};
 use std::os::fd::{AsFd, AsRawFd};
 use std::path::Path;
@@ -16,7 +17,7 @@ use std::fs::File;
 fn main() {
 
 
-    let mut dev = Arc::new(Device::open(&Path::new("/dev/video0"), DeviceConfig::new()).unwrap());
+    let dev = Arc::new(Device::open(&Path::new("/dev/video0"), DeviceConfig::new()).unwrap());
     dbg!(dev.caps());
 
     let downscaling = false;
@@ -87,7 +88,7 @@ fn main() {
 
       
         let processing = Instant::now();
-        let mut rgb_buf = vec![0u8; width as usize * height as usize * 3];
+        // let mut rgb_buf = vec![0u8; width as usize * height as usize * 3];
             if pixelformat == "NV12" {
                 let plane = buf.get_first_plane();
                 let data = mmap(&filefd, *plane.data_offset.unwrap() as u32, *plane.length).unwrap();
@@ -100,31 +101,30 @@ fn main() {
                     last_buf = data.data.to_vec();
                 }
 
-                std::fs::write("/home/orangepi/Documents/rkmpp/mpp/test/nv12.raw", &data).unwrap();
-
-                rgb_buf.resize(width as usize * height as usize * 3, 0);
-                ustreamer::converters::nv12_to_rgb_yuv(&data, width, height, &mut rgb_buf);
-                
+                let jpeg_data = rk_mpp::encode_jpeg(data.data.to_vec());
+                std::fs::write("outputmpp.jpg", jpeg_data.unwrap()).unwrap();
+                // rgb_buf.resize(width as usize * height as usize * 3, 0);
+                // ustreamer::converters::nv12_to_rgb_yuv(&data, width, height, &mut rgb_buf);
             
             
-                println!("Conversion processing time: {}", processing.elapsed().as_millis());    
-                let file = File::create(format!("output_{}.jpg", 0)).unwrap();
+                // println!("Conversion processing time: {}", processing.elapsed().as_millis());    
+                // let file = File::create(format!("output_{}.jpg", 0)).unwrap();
             }
             
 
-            if downscaling {
-                rgb_buf = ustreamer::downscale(&rgb_buf, downscale_w, downscale_h).unwrap();
-            }
+            // if downscaling {
+            //     rgb_buf = ustreamer::downscale(&rgb_buf, downscale_w, downscale_h).unwrap();
+            // }
 
-            let image = Image{ 
-                pixels: rgb_buf.as_slice(), 
-                width: downscale_w, 
-                pitch: downscale_w * 3, 
-                height: downscale_h, 
-                format: turbojpeg::PixelFormat::RGB};
-            let jpeg_data = compress(image, 80, Subsamp::Sub2x2).unwrap();
+            // let image = Image{ 
+            //     pixels: rgb_buf.as_slice(), 
+            //     width: downscale_w, 
+            //     pitch: downscale_w * 3, 
+            //     height: downscale_h, 
+            //     format: turbojpeg::PixelFormat::RGB};
+            // let jpeg_data = compress(image, 80, Subsamp::Sub2x2).unwrap();
             
-            std::fs::write("outputturbo.jpg", jpeg_data).unwrap();
+            
 
         println!("Frame processing time: {}", processing.elapsed().as_millis());
         frames += 1;
