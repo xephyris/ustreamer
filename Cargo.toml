@@ -1,0 +1,11 @@
+[package]
+name = "ustreamer"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+resize = "0.8.8"
+rgb = "0.8.52"
+turbojpeg = { version = "1.3.3", features = ["image"] }
+v4l2r = { version = "0.0.7", features = ["arch64"] }
+yuv = { version = "0.8.6", features = ["fast_mode"] }
