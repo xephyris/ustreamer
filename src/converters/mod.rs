@@ -1,6 +1,8 @@
 use crate::Color;
 use yuv::{yuv420_to_rgb, yuv_nv12_to_rgb, yuyv422_to_rgb, YuvBiPlanarImage, YuvConversionMode, YuvPlanarImage, YuvRange, YuvStandardMatrix};
 
+pub mod rk_rga;
+
 pub fn yuyv_to_rgb(y: i32, u:i32, v: i32) -> (u8, u8, u8){
     let y = y - 16;
     let u = u - 128;
