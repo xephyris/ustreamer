@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>MJPEG Stream with Frame Counter</title>
+    <style>
+        body {
+            font-family: sans-serif;
+            text-align: center;
+            background: #f0f0f0;
+        }
+        #frame-counter {
+            font-size: 1.5em;
+            margin: 20px;
+        }
+        img {
+            border: 2px solid #333;
+            max-width: 100%;
+        }
+    </style>
+</head>
+<body>
+    <h1>Live MJPEG Stream</h1>
+    <div id="frame-counter">Frame: 0</div>
+    <img src="/mjpeg" />
+
+    <script>
+    document.addEventListener("DOMContentLoaded", () => {
+        async function updateFrameCount() {
+            try {
+                const res = await fetch("/state");
+                const data = await res.json();
+                const el = document.getElementById("frame-counter");
+                if (el) {
+                    el.textContent = `Frame: ${data.frame}`;
+                }
+            } catch (e) {
+                console.error("Failed to fetch frame count", e);
+            }
+        }
+
+        setInterval(updateFrameCount, 100);
+    });
+    </script>
+</body>
+</html>

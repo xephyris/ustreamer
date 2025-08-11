@@ -1,12 +1,9 @@
-use std::ffi::CString;
+include!(concat!(env!("OUT_DIR"), "/mpp/bindings.rs"));
 
-include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
-
-pub fn encode_jpeg(raw_buf: Vec<u8>) -> Option<Vec<u8>> {
-    let width = 3840;
-    let height = 2160;
-    let quality = 80;
-    let frame_size = (width * height * 3 / 2) as usize;
+pub fn encode_jpeg(raw_buf: Vec<u8>, width: u32, height: u32, quality: u32, frame_size: usize) -> Option<Vec<u8>> {
+    let width = width as i32;
+    let height = height as i32;
+    let quality = quality as i32;
 
     // println!("Set Quality Configs");
     unsafe {
@@ -26,7 +23,7 @@ pub fn encode_jpeg(raw_buf: Vec<u8>) -> Option<Vec<u8>> {
         mpp_enc_cfg_set_s32(cfg, b"prep:height\0" as *const _ , height);
         mpp_enc_cfg_set_s32(cfg, b"prep:hor_stride\0" as *const _ , width);
         mpp_enc_cfg_set_s32(cfg, b"prep:ver_stride\0" as *const _ , height);
-        mpp_enc_cfg_set_s32(cfg, b"prep:format\0" as *const _ , MppFrameFormat_MPP_FMT_YUV420SP as i32);
+        mpp_enc_cfg_set_s32(cfg, b"prep:format\0" as *const _ , MppFrameFormat_MPP_FMT_BGR888 as i32);
         mpp_enc_cfg_set_s32(cfg, b"rc:mode\0" as *const _ , MppEncRcMode_e_MPP_ENC_RC_MODE_FIXQP as i32);
         mpp_enc_cfg_set_s32(cfg, b"jpeg:qfactor\0" as *const _ , quality);
 
@@ -64,7 +61,7 @@ pub fn encode_jpeg(raw_buf: Vec<u8>) -> Option<Vec<u8>> {
         mpp_frame_set_height(frame, height as u32);
         mpp_frame_set_hor_stride(frame, width as u32);
         mpp_frame_set_ver_stride(frame, height as u32);
-        mpp_frame_set_fmt(frame, MppFrameFormat_MPP_FMT_YUV420SP);
+        mpp_frame_set_fmt(frame, MppFrameFormat_MPP_FMT_BGR888);
         mpp_frame_set_pts(frame, 0);
         mpp_frame_set_buffer(frame, input_buf);
 
@@ -84,17 +81,30 @@ pub fn encode_jpeg(raw_buf: Vec<u8>) -> Option<Vec<u8>> {
             retrieve_fn(ctx, &mut packet);
         }
         
+        if packet.is_null() {
+            panic!("packet is null")
+        }
         let pkt_ptr: *mut u8 = mpp_packet_get_pos(packet) as *mut u8;
         let pkt_len: usize = mpp_packet_get_length(packet);
 
         
         let data = std::slice::from_raw_parts(pkt_ptr, pkt_len).to_vec();
 
-        mpp_packet_deinit(packet as *mut _);
-        mpp_frame_deinit(frame as *mut _);
-        mpp_buffer_put_with_caller(input_buf, b"main" as *const _);
-        mpp_destroy(ctx);
-
+        if !packet.is_null() {
+            mpp_packet_deinit(&mut packet);
+        }
+        if !frame.is_null() {
+            mpp_frame_deinit(&mut frame);
+        }
+        if !input_buf.is_null() {
+            mpp_buffer_put_with_caller(input_buf, b"main\0".as_ptr());
+        }
+        if !cfg.is_null() {
+            mpp_enc_cfg_deinit(cfg);
+        }
+        if !ctx.is_null() {
+            mpp_destroy(ctx);
+        }
         return Some(data);
     }
 }
