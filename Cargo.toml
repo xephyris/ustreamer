@@ -11,6 +11,7 @@ v4l2r = { version = "0.0.7", features = ["arch64"] }
 yuv = { version = "0.8.6", features = ["fast_mode"] }
 server = { path = "./server" }
 tokio = { version = "1.47.1", features = ["fs", "net"] }
+rayon = "1.10.0"
 
 [build-dependencies]
 bindgen = "0.72.0"

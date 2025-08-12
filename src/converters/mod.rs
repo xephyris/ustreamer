@@ -1,3 +1,5 @@
+use std::time::Instant;
+
 use crate::Color;
 use yuv::{yuv420_to_rgb, yuv_nv12_to_rgb, yuyv422_to_rgb, YuvBiPlanarImage, YuvConversionMode, YuvPlanarImage, YuvRange, YuvStandardMatrix};
 
@@ -71,6 +73,38 @@ pub fn nv12_420_to_rgb_yuv(buf: &[u8], width: u32, height: u32) -> Vec<u8> {
     yuv420_to_rgb(&planar, &mut rgb_buf, width as u32 * 3, YuvRange::Limited, YuvStandardMatrix::Bt709).unwrap();
     rgb_buf
 
+}
+
+pub fn nv24_444_to_nv12(buf: &[u8], width: u32, height: u32) -> Vec<u8> {
+    let start = Instant::now();
+    let y_size = width * height;
+    let mut dst = vec![0u8; (width * height * 3 / 2) as usize];
+    dst[..y_size as usize].copy_from_slice(&buf[..y_size as usize]);
+
+    let src_uv = buf[y_size as usize .. ].to_vec();
+    use rayon::prelude::*;
+
+    let dst_uv: Vec<u8> = (0..height / 2).into_par_iter().flat_map(|j| {
+        let mut row = Vec::with_capacity(width as usize);
+        for i in (0..width).step_by(2) {
+            let xy = ((j * 2 * width + i) * 2) as usize;
+            let xy1 = ((j * 2 * width + i + 1) * 2) as usize;
+            let x1y = (((j * 2 + 1) * width + i) * 2) as usize;
+            let x1y1 = (((j * 2 + 1) * width + i + 1) * 2) as usize;
+
+            let u = (src_uv[xy] as u32 + src_uv[xy1] as u32 + src_uv[x1y] as u32 + src_uv[x1y1] as u32) / 4;
+            let v = (src_uv[xy + 1] as u32 + src_uv[xy1 + 1] as u32 + src_uv[x1y + 1] as u32 + src_uv[x1y1 + 1] as u32) / 4;
+
+            row.push(u as u8);
+            row.push(v as u8);
+        }
+        row
+    }).collect();
+
+    
+    dst[y_size as usize..].copy_from_slice(&dst_uv);
+    println!("conversion time: {}", start.elapsed().as_millis());
+    dst
 }
 
 #[cfg(test)]

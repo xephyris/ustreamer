@@ -1,9 +1,28 @@
 include!(concat!(env!("OUT_DIR"), "/mpp/bindings.rs"));
 
-pub fn encode_jpeg(raw_buf: Vec<u8>, width: u32, height: u32, quality: u32, frame_size: usize) -> Option<Vec<u8>> {
+use crate::{converters::rk_rga, StreamPixelFormat};
+
+pub fn encode_jpeg(mut raw_buf: Vec<u8>, width: u32, height: u32, quality: u32, format: StreamPixelFormat) -> Option<Vec<u8>> {
+    let frame_size ;
+    // Currently for rockchip hardware (1920x1080 uses BGR for some reason)
+    match format {
+        StreamPixelFormat::NV24 => {
+            raw_buf = crate::converters::nv24_444_to_nv12(&raw_buf, width, height);
+            frame_size = (width * ((height + 15) & !15) * 3 / 2) as usize;
+        },
+        StreamPixelFormat::BGR3 => {
+            raw_buf = rk_rga::bgr_to_nv12(raw_buf, width, height);
+            frame_size = (width * ((height + 15) & !15) * 3 / 2) as usize;
+        }
+        StreamPixelFormat::NV12 => {
+            frame_size = (width * ((height + 15) & !15) * 3 / 2) as usize;
+        }
+    }
     let width = width as i32;
     let height = height as i32;
     let quality = quality as i32;
+    // Hardcoding for now
+    
 
     // println!("Set Quality Configs");
     unsafe {
@@ -23,7 +42,7 @@ pub fn encode_jpeg(raw_buf: Vec<u8>, width: u32, height: u32, quality: u32, fram
         mpp_enc_cfg_set_s32(cfg, b"prep:height\0" as *const _ , height);
         mpp_enc_cfg_set_s32(cfg, b"prep:hor_stride\0" as *const _ , width);
         mpp_enc_cfg_set_s32(cfg, b"prep:ver_stride\0" as *const _ , height);
-        mpp_enc_cfg_set_s32(cfg, b"prep:format\0" as *const _ , MppFrameFormat_MPP_FMT_BGR888 as i32);
+        mpp_enc_cfg_set_s32(cfg, b"prep:format\0" as *const _ , MppFrameFormat_MPP_FMT_YUV420SP as i32);
         mpp_enc_cfg_set_s32(cfg, b"rc:mode\0" as *const _ , MppEncRcMode_e_MPP_ENC_RC_MODE_FIXQP as i32);
         mpp_enc_cfg_set_s32(cfg, b"jpeg:qfactor\0" as *const _ , quality);
 
@@ -61,7 +80,7 @@ pub fn encode_jpeg(raw_buf: Vec<u8>, width: u32, height: u32, quality: u32, fram
         mpp_frame_set_height(frame, height as u32);
         mpp_frame_set_hor_stride(frame, width as u32);
         mpp_frame_set_ver_stride(frame, height as u32);
-        mpp_frame_set_fmt(frame, MppFrameFormat_MPP_FMT_BGR888);
+        mpp_frame_set_fmt(frame, MppFrameFormat_MPP_FMT_YUV420SP);
         mpp_frame_set_pts(frame, 0);
         mpp_frame_set_buffer(frame, input_buf);
 

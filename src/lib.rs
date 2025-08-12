@@ -6,10 +6,14 @@ pub struct Color {
     b: u8,
 }
 
-
+pub enum StreamPixelFormat {
+    NV12,
+    BGR3,
+    NV24,
+}
 
 use resize::Pixel::RGB8;
-use resize::Type::Lanczos3;
+use resize::Type::Triangle;
 use rgb::FromSlice;
 use std::net::TcpListener;
 
@@ -21,7 +25,7 @@ pub fn downscale(jpeg_rgb: &[u8], src_width: usize, src_height: usize) -> Result
     let mut dst = vec![0u8; dst_width * dst_height * 3];
 
     // Resize RGB buffer
-    let mut resizer = resize::new(src_width, src_height, dst_width, dst_height, RGB8, Lanczos3).unwrap();
+    let mut resizer = resize::new(src_width, src_height, dst_width, dst_height, RGB8, Triangle).unwrap();
     resizer.resize(jpeg_rgb.as_rgb(), dst.as_rgb_mut()).unwrap();
 
     // Encode resized buffer to JPEG
@@ -39,27 +43,31 @@ pub fn bind_socket() -> std::net::TcpListener {
     }
 }
 
+
 #[cfg(test)]
 mod tests {
     use std::io::Write;
 
     use turbojpeg::{compress, Image, Subsamp};
 
-    use crate::rk_mpp;
+
     
-    #[test]
-    fn encode_file_mpp() {
-        //! Data must be RAW NV12 data      
-        let input = std::fs::read("nv12.raw").unwrap();
-        let mut output = std::fs::File::create("test_encode.jpg").unwrap();  
-        let mut jpeg_data = Vec::new();
-        for i in 0..1 {
-            jpeg_data = rk_mpp::encode_jpeg(input.clone(), 3840, 2160, 80, 3840*2160*3/2).unwrap();
-            std::thread::sleep(std::time::Duration::from_millis(200));
-        }
-        output.write_all(&jpeg_data);
-        output.flush();
-    }
+    // use crate::rk_mpp;
+    // use crate::converters::rk_rga;
+    
+    // #[test]
+    // fn encode_file_mpp() {
+    //     //! Data must be RAW NV12 data      
+    //     let input = std::fs::read("nv12.raw").unwrap();
+    //     let mut output = std::fs::File::create("test_encode.jpg").unwrap();  
+    //     let mut jpeg_data = Vec::new();
+    //     for i in 0..1 {
+    //         jpeg_data = rk_mpp::encode_jpeg(input.clone(), 3840, 2160, 80, 3840*2160*3/2).unwrap();
+    //         std::thread::sleep(std::time::Duration::from_millis(200));
+    //     }
+    //     output.write_all(&jpeg_data);
+    //     output.flush();
+    // }
 
     #[test]
     fn encode_bgr_raw() {
@@ -78,12 +86,13 @@ mod tests {
         std::fs::write("test_outputbgr.jpg", &jpeg_data).unwrap();
     }
 
+
     #[test]
     fn encode_nv12_raw() {
         //! Data must be RAW NV12 data 
         let width = 1920;
         let height = 1080;     
-        let data = std::fs::read("bgr_convertednv12.raw").unwrap();
+        let data = std::fs::read("output.nv12").unwrap();
         let mut output = std::fs::File::create("test_encode_nv12.jpg").unwrap();  
         let mut rgb_buf = vec![0u8; width as usize * height as usize * 3];
         rgb_buf.resize(width as usize * height as usize * 3, 0);

@@ -62,3 +62,4 @@ unsafe fn wrapbuffer_virtualaddr(virt_addr: *mut c_void, width: u32, height: u32
     im2d_api_buffer
 
 }
+

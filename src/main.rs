@@ -6,6 +6,7 @@ use turbojpeg::Image;
 use turbojpeg::Subsamp;
 use ustreamer::bind_socket;
 use ustreamer::rk_mpp;
+use ustreamer::StreamPixelFormat;
 use v4l2r::{device::{DeviceConfig, Device, queue::Queue}, ioctl::{self, mmap, qbuf, reqbufs, GFmtError, MemoryConsistency, RequestBuffers, V4l2Buffer}, memory::MemoryType, Format, PixelFormat, QueueType,};
 use std::io::Write;
 use std::os::fd::{AsFd, AsRawFd};
@@ -29,8 +30,8 @@ fn main() {
     let downscaling = false;
     let skip_repeats = false;
     
-    let width: usize = 1920;
-    let height: usize = 1080;
+    let mut width: usize = 3840;
+    let mut height: usize = 2160;
     let downscale_w: usize;
     let downscale_h: usize;
     if downscaling {
@@ -44,23 +45,26 @@ fn main() {
     let file = dev.as_raw_fd();
     let filefd = dev.as_fd();
 
-    let format:Result<Format, GFmtError> = ioctl::g_fmt(&file, QueueType::VideoCaptureMplane);
+    let mut format:Format = ioctl::g_fmt(&file, QueueType::VideoCaptureMplane).unwrap();
     println!("Format: {:?}", format);
-    let new_format = Format{    
-        width: width as u32,
-        height: height as u32,
-        pixelformat: PixelFormat::from_fourcc(b"BGR3"),
-        plane_fmt: Vec::new()
-    }.into();
+    width = format.width as usize;
+    height = format.height as usize;
 
-    let mut queue = Queue::get_capture_mplane_queue(dev.clone()).unwrap();
-    queue.set_format(new_format).unwrap();
+    // let new_format = Format{    
+    //     width: width as u32,
+    //     height: height as u32,
+    //     pixelformat: PixelFormat::from_fourcc(b"BGR3"),
+    //     plane_fmt: Vec::new()
+    // }.into();
+
+    // let mut queue = Queue::get_capture_mplane_queue(dev.clone()).unwrap();
+    // queue.set_format(new_format).unwrap();
 
     println!("New FORMAT: {:?}", ioctl::g_fmt::<Format>(&file, QueueType::VideoCaptureMplane));
     let pixelformat = ioctl::g_fmt::<Format>(&file, QueueType::VideoCaptureMplane).unwrap().pixelformat.to_string();
+    
 
-
-    let req: RequestBuffers = reqbufs(&file, QueueType::VideoCaptureMplane, MemoryType::Mmap, 4, MemoryConsistency::empty()).unwrap();
+    let mut req: RequestBuffers = reqbufs(&file, QueueType::VideoCaptureMplane, MemoryType::Mmap, 4, MemoryConsistency::empty()).unwrap();
     println!("Requested {} buffers", req.count);
 
     let mut frames = 0;
@@ -76,9 +80,29 @@ fn main() {
     let mut stream = None;
 
     let mut total_frames = 0;
-    
+    let mut reset = false;
     loop {
-        if stream.as_ref().is_none() {
+        if reset {
+            ioctl::streamoff(&file, QueueType::VideoCaptureMplane).unwrap();
+            format = ioctl::g_fmt(&file, QueueType::VideoCaptureMplane).unwrap();
+            width = format.width as usize;
+            height = format.height as usize;
+            
+            req = match reqbufs(&file, QueueType::VideoCaptureMplane, MemoryType::Mmap, 4, MemoryConsistency::empty()) {
+                Ok(req) => {
+                    reset = false;
+                    println!("Format: {:?}", format);
+                    req
+                },
+                Err(err) => {
+                    continue
+                }
+            };
+            println!("Requested {} buffers",  req.count);
+            
+        }
+
+        else if stream.as_ref().is_none() {
             match listener.accept() {
                 Ok((stm, addr)) => {
                     stream.replace(stm);
@@ -118,7 +142,16 @@ fn main() {
             streamon(&file, QueueType::VideoCaptureMplane).unwrap();
 
             use v4l2r::ioctl::dqbuf;
-            let buf: V4l2Buffer = dqbuf(&file, QueueType::VideoCaptureMplane).unwrap();
+            let buf: V4l2Buffer = match dqbuf(&file, QueueType::VideoCaptureMplane) {
+                Ok(buf) => {
+                    buf
+                },
+                Err(err) => {
+                    // eprintln!("{}", err);
+                    reset = true;
+                    continue
+                }
+            };
 
             let mut jpeg_data = Vec::new();
 
@@ -136,7 +169,7 @@ fn main() {
                         last_buf = data.data.to_vec();
                     }
 
-                    jpeg_data = rk_mpp::encode_jpeg(data.data.to_vec(), 3840, 2160, 80, 3840 * 2160 * 3 / 2).unwrap();
+                    jpeg_data = rk_mpp::encode_jpeg(data.data.to_vec(), width as u32, height as u32, 80, StreamPixelFormat::NV12).unwrap();
                     
                     // rgb_buf.resize(width as usize * height as usize * 3, 0);
                     // ustreamer::converters::nv12_to_rgb_yuv(&data, width, height, &mut rgb_buf);
@@ -160,7 +193,7 @@ fn main() {
                         last_buf = data.data.to_vec();
                     }
 
-                    jpeg_data = rk_mpp::encode_jpeg(data.data.to_vec(), 1920, 1080, 80, 1920 * 1080 * 3).unwrap();
+                    jpeg_data = rk_mpp::encode_jpeg(data.data.to_vec(), width as u32, height as u32, 80, StreamPixelFormat::BGR3).unwrap();
 
                     // let width = 1920;
                     // let height = 1080;
@@ -197,6 +230,26 @@ fn main() {
                     // println!("Conversion processing time: {}", processing.elapsed().as_millis());    
                     // let file = File::create(format!("output_{}.jpg", 0)).unwrap();
                 }
+
+                if pixelformat == "NV24" {
+                    let plane = buf.get_first_plane();
+                    println!("Number of PLANES {}", buf.num_planes());
+                    let data = mmap(&filefd, *plane.data_offset.unwrap() as u32, *plane.length).unwrap();
+                    
+                    if data.data == last_buf && skip_repeats {
+                        frames += 1;
+                        println!("REPEATED FRAMES FOUND!!!");
+                        rframes += 1;
+                        continue
+                    } else {
+                        last_buf = data.data.to_vec();
+                    }
+
+                    // std::fs::write("nv24.raw", data.data.to_vec()).unwrap();
+                    jpeg_data = rk_mpp::encode_jpeg(data.data.to_vec(), width as u32, height as u32, 80, StreamPixelFormat::NV24).unwrap();
+                    
+                    
+                }
                 
 
                 // if downscaling {
@@ -211,7 +264,7 @@ fn main() {
                 //     format: turbojpeg::PixelFormat::RGB};
                 // let jpeg_data = compress(image, 80, Subsamp::Sub2x2).unwrap();
                 println!("Streaming");
-                // std::fs::write("outputmpp.jpg", &jpeg_data).unwrap();
+                // std::fs::write("outputmpp24.jpg", &jpeg_data).unwrap();
                 if stream.is_some() {
                     
                     let len = jpeg_data.len().to_be_bytes();

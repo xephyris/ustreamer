@@ -25,23 +25,33 @@ async fn main() {
 
     let (tx, rx) = mpsc::channel::<bool>();
 
-    let socket = Arc::new(Mutex::new(attach_socket().await));
+    let socket;
 
-    tokio::spawn(async move {
-        mjpeg_stream(socket, shared.clone()).await;
-    });
+    loop {
+        if let Some(found) = attach_socket().await {
+            socket = Arc::new(Mutex::new(found));
+            tokio::spawn(async move {
+                mjpeg_stream(socket, shared.clone()).await;
+            });
+            break;
+        }
+    }
+     
+
+    
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();
     axum::serve(listener, app).await.unwrap();
 }
 
-async fn attach_socket() -> tokio::net::TcpStream {
+async fn attach_socket() -> Option<tokio::net::TcpStream> {
     match TcpStream::connect("127.0.1.1:7878").await {
         Ok(socket) => {
-            socket
+            Some(socket)
         }, 
         Err(_) => {
-            panic!("Failed to connect to socket. Is the image server running?")
+            eprintln!("Failed to connect to socket. Is the image server running?");
+            None
         }
     }
 }

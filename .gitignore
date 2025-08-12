@@ -3,4 +3,5 @@
 /output*
 /test*
 *.jpg
+*.raw
 /.vscode
