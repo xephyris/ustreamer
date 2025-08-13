@@ -25,17 +25,11 @@ async fn main() {
 
     let (tx, rx) = mpsc::channel::<bool>();
 
-    let socket;
-
-    loop {
-        if let Some(found) = attach_socket().await {
-            socket = Arc::new(Mutex::new(found));
-            tokio::spawn(async move {
-                mjpeg_stream(socket, shared.clone()).await;
-            });
-            break;
-        }
-    }
+    let reconnect = true;
+    
+    tokio::spawn(async move {
+        attach_socket(shared).await;
+    });
      
 
     
@@ -44,16 +38,37 @@ async fn main() {
     axum::serve(listener, app).await.unwrap();
 }
 
-async fn attach_socket() -> Option<tokio::net::TcpStream> {
-    match TcpStream::connect("127.0.1.1:7878").await {
-        Ok(socket) => {
-            Some(socket)
-        }, 
-        Err(_) => {
-            eprintln!("Failed to connect to socket. Is the image server running?");
-            None
+async fn attach_socket(image_data: Arc<Mutex<ImageData>>) {
+    let shared_data = Arc::clone(&image_data);
+    loop {
+        let mut handle = None;
+        match TcpStream::connect("127.0.1.1:7878").await {
+            Ok(found) => {
+                let socket = Arc::new(Mutex::new(found));
+                let clone = Arc::clone(&shared_data);
+                handle.replace(tokio::spawn(async move {
+                    mjpeg_stream(socket, clone).await;
+                }));
+            }, 
+            Err(_) => {
+                eprintln!("Failed to connect to socket. Is the image server running?");
+                sleep(Duration::from_millis(200)).await;
+            }
         }
+        
+        if handle.is_some() {
+            match handle.take().unwrap().await {
+                Ok(_) => {
+                    println!("Reconnecting ...")
+                },
+                Err(e) => { 
+                    eprintln!("Streamer failed {}", e);
+                 }
+            }
+        }
+        sleep(Duration::from_millis(2000)).await;
     }
+    
 }
 
 type SharedImage = Arc<Mutex<Option<Vec<u8>>>>;
@@ -93,6 +108,7 @@ async fn mjpeg_stream(socket: Arc<Mutex<TcpStream>>, image: Arc<Mutex<ImageData>
     let mut stream= Box::pin(net_fetcher.get_stream());
     let mut fps = 0;
     let mut frames = Instant::now();
+    let mut missed = 0;
     loop {
         let mut lock = image.lock().await;
         if frames.elapsed() >= Duration::from_secs(1) {
@@ -104,9 +120,14 @@ async fn mjpeg_stream(socket: Arc<Mutex<TcpStream>>, image: Arc<Mutex<ImageData>
             lock.frame = Some(img_data);
             lock.total_frames.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             fps += 1;
+            missed = 0;
             println!("Frames recieved: {}", lock.total_frames.load(std::sync::atomic::Ordering::Relaxed));
         } else {
+            missed += 1;
             println!("nothing recieved");
+            if missed > 50 {
+                break;
+            }
         }
         // sleep(Duration::from_millis(500)).await;
     }
