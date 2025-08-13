@@ -5,8 +5,9 @@ use turbojpeg::image::ImageBuffer;
 use turbojpeg::Image;
 use turbojpeg::Subsamp;
 use ustreamer::bind_socket;
-use ustreamer::rk_mpp;
+
 use ustreamer::StreamPixelFormat;
+use v4l2r::ioctl::PlaneMapping;
 use v4l2r::{device::{DeviceConfig, Device, queue::Queue}, ioctl::{self, mmap, qbuf, reqbufs, GFmtError, MemoryConsistency, RequestBuffers, V4l2Buffer}, memory::MemoryType, Format, PixelFormat, QueueType,};
 use std::io::Write;
 use std::os::fd::{AsFd, AsRawFd};
@@ -15,6 +16,9 @@ use std::sync::Arc;
 use std::time::Duration;
 use std::time::Instant;
 use std::fs::File;
+
+#[cfg(mpp_accel)]
+use ustreamer::rk_mpp;
 
 
 // set CPATH when building: 
@@ -153,103 +157,19 @@ fn main() {
                 }
             };
 
-            let mut jpeg_data = Vec::new();
-
-            let processing = Instant::now();
-            // let mut rgb_buf = vec![0u8; width as usize * height as usize * 3];
-                if pixelformat == "NV12" {
-                    let plane = buf.get_first_plane();
-                    let data = mmap(&filefd, *plane.data_offset.unwrap() as u32, *plane.length).unwrap();
-                    if data.data == last_buf && skip_repeats {
-                        frames += 1;
-                        println!("REPEATED FRAMES FOUND!!!");
-                        rframes += 1;
-                        continue
-                    } else {
-                        last_buf = data.data.to_vec();
-                    }
-
-                    jpeg_data = rk_mpp::encode_jpeg(data.data.to_vec(), width as u32, height as u32, 80, StreamPixelFormat::NV12).unwrap();
-                    
-                    // rgb_buf.resize(width as usize * height as usize * 3, 0);
-                    // ustreamer::converters::nv12_to_rgb_yuv(&data, width, height, &mut rgb_buf);
-                
-                
-                    // println!("Conversion processing time: {}", processing.elapsed().as_millis());    
-                    // let file = File::create(format!("output_{}.jpg", 0)).unwrap();
-                }
-                
-                if pixelformat == "BGR3" {
-                    let plane = buf.get_first_plane();
-                    println!("Number of PLANES {}", buf.num_planes());
-                    let data = mmap(&filefd, *plane.data_offset.unwrap() as u32, *plane.length).unwrap();
-                    
-                    if data.data == last_buf && skip_repeats {
-                        frames += 1;
-                        println!("REPEATED FRAMES FOUND!!!");
-                        rframes += 1;
-                        continue
-                    } else {
-                        last_buf = data.data.to_vec();
-                    }
-
-                    jpeg_data = rk_mpp::encode_jpeg(data.data.to_vec(), width as u32, height as u32, 80, StreamPixelFormat::BGR3).unwrap();
-
-                    // let width = 1920;
-                    // let height = 1080;
-                    // let num_bytes = width * height * 3;
-
-                    // // Load raw BGR data
-                    // let mut bgr_data = data.data.to_vec();
-                    // let mut rgb_data = Vec::with_capacity(bgr_data.len());
-
-                    // for chunk in bgr_data.chunks(3) {
-                    //     let b = chunk[0];
-                    //     let g = chunk[1];
-                    //     let r = chunk[2];
-                    //     rgb_data.extend_from_slice(&[r, g, b]);
-                    // }
-                    // // Initialize TurboJPEG compressor
-
-                    // let image = Image{ 
-                    // pixels: rgb_data.as_slice(), 
-                    // width: 1920, 
-                    // pitch: 1920 * 3, 
-                    // height: 1080, 
-                    // format: turbojpeg::PixelFormat::RGB};
-                    // Compress to JPEG with ~80% quality
-                    // let jpeg_data = compress(image, 80, Subsamp::Sub2x2).unwrap();
-
-                    // Write JPEG to file
-                    // std::fs::write("outputbgr.jpg", &jpeg_data).unwrap();
-                    
-                    // rgb_buf.resize(width as usize * height as usize * 3, 0);
-                    // ustreamer::converters::nv12_to_rgb_yuv(&data, width, height, &mut rgb_buf);
-                
-                
-                    // println!("Conversion processing time: {}", processing.elapsed().as_millis());    
-                    // let file = File::create(format!("output_{}.jpg", 0)).unwrap();
-                }
-
-                if pixelformat == "NV24" {
-                    let plane = buf.get_first_plane();
-                    println!("Number of PLANES {}", buf.num_planes());
-                    let data = mmap(&filefd, *plane.data_offset.unwrap() as u32, *plane.length).unwrap();
-                    
-                    if data.data == last_buf && skip_repeats {
-                        frames += 1;
-                        println!("REPEATED FRAMES FOUND!!!");
-                        rframes += 1;
-                        continue
-                    } else {
-                        last_buf = data.data.to_vec();
-                    }
-
-                    // std::fs::write("nv24.raw", data.data.to_vec()).unwrap();
-                    jpeg_data = rk_mpp::encode_jpeg(data.data.to_vec(), width as u32, height as u32, 80, StreamPixelFormat::NV24).unwrap();
-                    
-                    
-                }
+            println!("Number of PLANES {}", buf.num_planes());
+            let plane = buf.get_first_plane();
+            let data = mmap(&filefd, *plane.data_offset.unwrap() as u32, *plane.length).unwrap();
+            if data.data == last_buf && skip_repeats {
+                frames += 1;
+                println!("REPEATED FRAMES FOUND!!!");
+                rframes += 1;
+                continue
+            } else {
+                last_buf = data.data.to_vec();
+            }
+            
+            let jpeg_data = encode_jpeg(data, width, height, &pixelformat);
                 
 
                 // if downscaling {
@@ -288,12 +208,140 @@ fn main() {
 
 
             total_frames += 1;
-                println!("Data length: {}", jpeg_data.len());
+            println!("Data length: {}", jpeg_data.len());
 
-            println!("Frame processing time: {}", processing.elapsed().as_millis());
+            
             frames += 1;
         }
     }
 }
 
+#[cfg(mpp_accel)]
+fn encode_jpeg(data: PlaneMapping, width:usize, height: usize, pixelformat: &str) -> Vec<u8> {
+    let mut jpeg_data = Vec::new();
+
+    let processing = Instant::now();
+    // let mut rgb_buf = vec![0u8; width as usize * height as usize * 3];
+    if pixelformat == "NV12" {
+        jpeg_data = rk_mpp::encode_jpeg(data.data.to_vec(), width as u32, height as u32, 80, StreamPixelFormat::NV12).unwrap();
+        
+        // rgb_buf.resize(width as usize * height as usize * 3, 0);
+        // ustreamer::converters::nv12_to_rgb_yuv(&data, width, height, &mut rgb_buf);
+    
+    
+        // println!("Conversion processing time: {}", processing.elapsed().as_millis());    
+        // let file = File::create(format!("output_{}.jpg", 0)).unwrap();
+    }
+    
+    if pixelformat == "BGR3" {
+
+        jpeg_data = rk_mpp::encode_jpeg(data.data.to_vec(), width as u32, height as u32, 80, StreamPixelFormat::BGR3).unwrap();
+
+        // let width = 1920;
+        // let height = 1080;
+        // let num_bytes = width * height * 3;
+
+        // // Load raw BGR data
+        // let mut bgr_data = data.data.to_vec();
+        // let mut rgb_data = Vec::with_capacity(bgr_data.len());
+
+        // for chunk in bgr_data.chunks(3) {
+        //     let b = chunk[0];
+        //     let g = chunk[1];
+        //     let r = chunk[2];
+        //     rgb_data.extend_from_slice(&[r, g, b]);
+        // }
+        // // Initialize TurboJPEG compressor
+
+        // let image = Image{ 
+        // pixels: rgb_data.as_slice(), 
+        // width: 1920, 
+        // pitch: 1920 * 3, 
+        // height: 1080, 
+        // format: turbojpeg::PixelFormat::RGB};
+        // Compress to JPEG with ~80% quality
+        // let jpeg_data = compress(image, 80, Subsamp::Sub2x2).unwrap();
+
+        // Write JPEG to file
+        // std::fs::write("outputbgr.jpg", &jpeg_data).unwrap();
+        
+        // rgb_buf.resize(width as usize * height as usize * 3, 0);
+        // ustreamer::converters::nv12_to_rgb_yuv(&data, width, height, &mut rgb_buf);
+    
+    
+        // println!("Conversion processing time: {}", processing.elapsed().as_millis());    
+        // let file = File::create(format!("output_{}.jpg", 0)).unwrap();
+    }
+
+    if pixelformat == "NV24" {
+        // std::fs::write("nv24.raw", data.data.to_vec()).unwrap();
+        jpeg_data = rk_mpp::encode_jpeg(data.data.to_vec(), width as u32, height as u32, 80, StreamPixelFormat::NV24).unwrap();
+    }
+    println!("Frame processing time: {}", processing.elapsed().as_millis());
+    jpeg_data
+}
+
+#[cfg(not(mpp_accel))]
+fn encode_jpeg(data: PlaneMapping, width:usize, height: usize, pixelformat: &str) -> Vec<u8> {
+    use turbojpeg::OwnedBuf;
+
+    println!("Using CPU for encoding");
+    let mut jpeg_data = OwnedBuf::new();
+    let raw = data.data.to_vec();
+    if pixelformat == "NV12" {
+        let mut rgb_buf = vec![0u8; (width * height * 3) as usize];
+        ustreamer::converters::nv12_to_rgb_yuv(&data, width, height, &mut rgb_buf);
+
+        let image = Image{ 
+            pixels: raw.as_slice(), 
+            width: width, 
+            pitch: width * 3, 
+            height: height, 
+            format: turbojpeg::PixelFormat::RGB
+        };
+
+        jpeg_data = compress(image, 80, Subsamp::Sub2x2).unwrap();
+
+        // println!("Conversion processing time: {}", processing.elapsed().as_millis());    
+        // let file = File::create(format!("output_{}.jpg", 0)).unwrap();
+    }
+    
+    if pixelformat == "BGR3" {
+        let image = Image{ 
+            pixels: raw.as_slice(), 
+            width: width, 
+            pitch: width * 3, 
+            height: height, 
+            format: turbojpeg::PixelFormat::BGR
+        };
+
+        jpeg_data = compress(image, 80, Subsamp::Sub2x2).unwrap();
+
+        // Write JPEG to file
+        // std::fs::write("outputbgr.jpg", &jpeg_data).unwrap();
+
+        // rgb_buf.resize(width as usize * height as usize * 3, 0);
+        // ustreamer::converters::nv12_to_rgb_yuv(&data, width, height, &mut rgb_buf);
+
+        // println!("Conversion processing time: {}", processing.elapsed().as_millis());    
+        // let file = File::create(format!("output_{}.jpg", 0)).unwrap();
+    }
+
+    if pixelformat == "NV24" {
+        // std::fs::write("nv24.raw", data.data.to_vec()).unwrap();
+        let mut rgb_buf = vec![0u8; (width * height * 3) as usize];
+        ustreamer::converters::nv24_to_rgb_yuv(&data, width, height, &mut rgb_buf);
+
+        let image = Image{ 
+            pixels: raw.as_slice(), 
+            width: width, 
+            pitch: width * 3, 
+            height: height, 
+            format: turbojpeg::PixelFormat::RGB
+        };
+
+        jpeg_data = compress(image, 80, Subsamp::Sub2x2).unwrap();
+    }
+    jpeg_data.to_vec()
+}
 

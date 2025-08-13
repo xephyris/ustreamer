@@ -1,29 +1,18 @@
 include!(concat!(env!("OUT_DIR"), "/mpp/bindings.rs"));
 
-use crate::{converters::rk_rga, StreamPixelFormat};
+#[cfg(rga_converter)]
+use crate::converters::rk_rga;
 
-pub fn encode_jpeg(mut raw_buf: Vec<u8>, width: u32, height: u32, quality: u32, format: StreamPixelFormat) -> Option<Vec<u8>> {
-    let frame_size ;
-    // Currently for rockchip hardware (1920x1080 uses BGR for some reason)
-    match format {
-        StreamPixelFormat::NV24 => {
-            raw_buf = crate::converters::nv24_444_to_nv12(&raw_buf, width, height);
-            frame_size = (width * ((height + 15) & !15) * 3 / 2) as usize;
-        },
-        StreamPixelFormat::BGR3 => {
-            raw_buf = rk_rga::bgr_to_nv12(raw_buf, width, height);
-            frame_size = (width * ((height + 15) & !15) * 3 / 2) as usize;
-        }
-        StreamPixelFormat::NV12 => {
-            frame_size = (width * ((height + 15) & !15) * 3 / 2) as usize;
-        }
-    }
+use crate::StreamPixelFormat;
+
+pub fn encode_jpeg(raw_buf: Vec<u8>, width: u32, height: u32, quality: u32, format: StreamPixelFormat) -> Option<Vec<u8>> {
+
+    let (raw_buf, frame_size) = convert_to_nv12(raw_buf, width, height, format);
+
     let width = width as i32;
     let height = height as i32;
     let quality = quality as i32;
-    // Hardcoding for now
     
-
     // println!("Set Quality Configs");
     unsafe {
         let mut ctx: MppCtx = std::ptr::null_mut();  // Replace with actual context init
@@ -128,4 +117,41 @@ pub fn encode_jpeg(mut raw_buf: Vec<u8>, width: u32, height: u32, quality: u32, 
     }
 }
 
+#[cfg(rga_converter)]
+fn convert_to_nv12(mut raw_buf: Vec<u8>, width: u32, height: u32, format: StreamPixelFormat) -> (Vec<u8>, usize){
+    println!("USING HARDWARE RGA CONVERSION");
+    let frame_size;
+    match format {
+        StreamPixelFormat::NV24 => {
+            raw_buf = crate::converters::nv24_444_to_nv12(&raw_buf, width, height);
+            frame_size = (width * ((height + 15) & !15) * 3 / 2) as usize;
+        },
+        StreamPixelFormat::BGR3 => {
+            raw_buf = rk_rga::bgr_to_nv12(raw_buf, width, height);
+            frame_size = (width * ((height + 15) & !15) * 3 / 2) as usize;
+        }
+        StreamPixelFormat::NV12 => {
+            frame_size = (width * ((height + 15) & !15) * 3 / 2) as usize;
+        }
+    }
+    (raw_buf, frame_size)
+}
 
+#[cfg(not(rga_converter))]
+fn convert_to_nv12(mut raw_buf: Vec<u8>, width: u32, height: u32, format: StreamPixelFormat) -> (Vec<u8>, usize){
+    let frame_size;
+    match format {
+        StreamPixelFormat::NV24 => {
+            raw_buf = crate::converters::nv24_444_to_nv12(&raw_buf, width, height);
+            frame_size = (width * ((height + 15) & !15) * 3 / 2) as usize;
+        },
+        StreamPixelFormat::BGR3 => {
+            raw_buf = crate::converters::bgr3_888_to_nv12(&raw_buf, width as usize, height as usize);
+            frame_size = (width * ((height + 15) & !15) * 3 / 2) as usize;
+        }
+        StreamPixelFormat::NV12 => {
+            frame_size = (width * ((height + 15) & !15) * 3 / 2) as usize;
+        }
+    }
+    (raw_buf, frame_size)
+}

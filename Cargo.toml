@@ -15,3 +15,7 @@ rayon = "1.10.0"
 
 [build-dependencies]
 bindgen = "0.72.0"
+
+[features]
+default = ["rk_hw_accel"]
+rk_hw_accel = []

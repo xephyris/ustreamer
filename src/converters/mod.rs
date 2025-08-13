@@ -1,8 +1,9 @@
 use std::time::Instant;
 
 use crate::Color;
-use yuv::{yuv420_to_rgb, yuv_nv12_to_rgb, yuyv422_to_rgb, YuvBiPlanarImage, YuvConversionMode, YuvPlanarImage, YuvRange, YuvStandardMatrix};
+use yuv::{yuv420_to_rgb, yuv_nv12_to_rgb, yuv_nv24_to_rgb, yuyv422_to_rgb, BufferStoreMut, YuvBiPlanarImage, YuvBiPlanarImageMut, YuvConversionMode, YuvPlanarImage, YuvRange, YuvStandardMatrix};
 
+#[cfg(rga_converter)] 
 pub mod rk_rga;
 
 pub fn yuyv_to_rgb(y: i32, u:i32, v: i32) -> (u8, u8, u8){
@@ -105,6 +106,38 @@ pub fn nv24_444_to_nv12(buf: &[u8], width: u32, height: u32) -> Vec<u8> {
     dst[y_size as usize..].copy_from_slice(&dst_uv);
     println!("conversion time: {}", start.elapsed().as_millis());
     dst
+}
+
+pub fn nv24_to_rgb_yuv(buf: &[u8], width: usize, height: usize, rgb_buf: &mut Vec<u8>) {
+    let wu32 = width as u32;
+    let hu32 = height as u32;
+    let biplanar = YuvBiPlanarImage{
+        y_plane: &buf[..width * height], 
+        y_stride: wu32, 
+        uv_plane: &buf[width * height .. ], 
+        uv_stride: wu32 * 2, 
+        width: wu32, 
+        height: hu32 };
+    assert_eq!(buf.len(), ((width * height) * 15 / 10).try_into().unwrap());
+    yuv_nv24_to_rgb(&biplanar, rgb_buf, width as u32 * 3, YuvRange::Limited, YuvStandardMatrix::Bt709, YuvConversionMode::Fast).unwrap();
+}
+
+pub fn bgr3_888_to_nv12(buf: &[u8], width: usize, height: usize) -> Vec<u8> {
+    let wu32 = width as u32;
+    let hu32 = height as u32;
+    let mut biplanar = YuvBiPlanarImageMut{
+        y_plane: BufferStoreMut::Owned(vec![0u8; width * height]), 
+        y_stride: wu32, 
+        uv_plane: BufferStoreMut::Owned(vec![0u8; width * height / 2]), 
+        uv_stride: wu32, 
+        width: wu32, 
+        height: hu32 };
+    // assert_eq!(buf.len(), ((width * height) * 15 / 10).try_into().unwrap());
+    yuv::bgr_to_yuv_nv12(&mut biplanar, buf, (width * 3) as u32, YuvRange::Limited, YuvStandardMatrix::Bt709, YuvConversionMode::Fast).unwrap();
+    let mut out = Vec::new();
+    out.extend_from_slice(biplanar.y_plane.borrow());
+    out.extend_from_slice(biplanar.uv_plane.borrow());
+    out
 }
 
 #[cfg(test)]
