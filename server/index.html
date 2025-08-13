@@ -32,7 +32,7 @@
                 const data = await res.json();
                 const el = document.getElementById("frame-counter");
                 if (el) {
-                    el.textContent = `Frame: ${data.frame}`;
+                    el.textContent = `Frame: ${data["client frame"]}`;
                 }
             } catch (e) {
                 console.error("Failed to fetch frame count", e);

@@ -139,6 +139,7 @@ fn convert_to_nv12(mut raw_buf: Vec<u8>, width: u32, height: u32, format: Stream
 
 #[cfg(not(rga_converter))]
 fn convert_to_nv12(mut raw_buf: Vec<u8>, width: u32, height: u32, format: StreamPixelFormat) -> (Vec<u8>, usize){
+    println!("RGA device missing");
     let frame_size;
     match format {
         StreamPixelFormat::NV24 => {

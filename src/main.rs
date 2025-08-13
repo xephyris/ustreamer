@@ -65,7 +65,7 @@ fn main() {
     // queue.set_format(new_format).unwrap();
 
     println!("New FORMAT: {:?}", ioctl::g_fmt::<Format>(&file, QueueType::VideoCaptureMplane));
-    let pixelformat = ioctl::g_fmt::<Format>(&file, QueueType::VideoCaptureMplane).unwrap().pixelformat.to_string();
+    let mut pixelformat = ioctl::g_fmt::<Format>(&file, QueueType::VideoCaptureMplane).unwrap().pixelformat.to_string();
     
 
     let mut req: RequestBuffers = reqbufs(&file, QueueType::VideoCaptureMplane, MemoryType::Mmap, 4, MemoryConsistency::empty()).unwrap();
@@ -83,6 +83,9 @@ fn main() {
 
     let mut stream = None;
 
+    let mut encoder = get_encoder();
+
+    let mut fps = 0;
     let mut total_frames = 0;
     let mut reset = false;
     loop {
@@ -91,6 +94,7 @@ fn main() {
             format = ioctl::g_fmt(&file, QueueType::VideoCaptureMplane).unwrap();
             width = format.width as usize;
             height = format.height as usize;
+            pixelformat = format.pixelformat.to_string();
             
             req = match reqbufs(&file, QueueType::VideoCaptureMplane, MemoryType::Mmap, 4, MemoryConsistency::empty()) {
                 Ok(req) => {
@@ -103,7 +107,6 @@ fn main() {
                 }
             };
             println!("Requested {} buffers",  req.count);
-            
         }
 
         else if stream.as_ref().is_none() {
@@ -129,6 +132,11 @@ fn main() {
             if start.elapsed().as_secs() > 1 {
                 println!("FPS: {} REPEATED FRAMES: {}", frames, rframes);
                 println!("Total Frames: {}", total_frames);
+                if fps != 0 {
+                    fps = fps + frames / 2;
+                } else {
+                    fps = frames;
+                }
                 frames = 0;
                 rframes = 0;
                 start = Instant::now();
@@ -186,13 +194,20 @@ fn main() {
                 println!("Streaming");
                 // std::fs::write("outputmpp24.jpg", &jpeg_data).unwrap();
                 if stream.is_some() {
-                    
+
                     let len = jpeg_data.len().to_be_bytes();
                     let mut open_stream = stream.take().unwrap();
                     open_stream.write_all(&len).unwrap();
                     // println!("length: {}", usize::from_be_bytes(len));
                     open_stream.write_all(&jpeg_data).expect("Write Failed");
-                    
+                    if total_frames % 10 == 0 {
+                        //Width x Height x Pixel Format x Encoder x Server FPS x Total Frames
+                        let mut stream_metadata = format!("{width}x{height}x{pixelformat}x{encoder}x{fps}x{total_frames}").as_bytes().to_vec();
+                        stream_metadata.resize(512, 0u8);
+                        open_stream.write_all(&stream_metadata).expect("Write Failed");
+                    } else {
+                        open_stream.write_all(&vec![0u8; 512]).expect("Write Failed"); // empty metadata block
+                    };
                     // println!("Data length: {}", jpeg_data.len());
                     stream.replace(open_stream);
                 }
@@ -345,3 +360,12 @@ fn encode_jpeg(data: PlaneMapping, width:usize, height: usize, pixelformat: &str
     jpeg_data.to_vec()
 }
 
+#[cfg(mpp_accel)]
+fn get_encoder() -> String {
+    String::from("rockchip mpp")
+}
+
+#[cfg(not(mpp_accel))]
+fn get_encoder() -> String {
+    String::from("cpu")
+}

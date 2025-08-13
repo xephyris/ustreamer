@@ -112,16 +112,27 @@ async fn mjpeg_stream(socket: Arc<Mutex<TcpStream>>, image: Arc<Mutex<ImageData>
     loop {
         let mut lock = image.lock().await;
         if frames.elapsed() >= Duration::from_secs(1) {
-            lock.fps.swap(fps, std::sync::atomic::Ordering::Relaxed);
+            lock.client_fps.swap((lock.client_fps.load(std::sync::atomic::Ordering::Relaxed) + fps) / 2, std::sync::atomic::Ordering::Relaxed);
             fps = 0;
             frames = Instant::now();
         }
         if let Some(img_data) = stream.next().await{
-            lock.frame = Some(img_data);
-            lock.total_frames.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            lock.frame = Some(img_data.0);
+            lock.client_total_frames.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             fps += 1;
             missed = 0;
-            println!("Frames recieved: {}", lock.total_frames.load(std::sync::atomic::Ordering::Relaxed));
+            println!("Frames recieved: {}", lock.client_total_frames.load(std::sync::atomic::Ordering::Relaxed));
+            if let Some(metadata) = img_data.1 {
+                let parts: Vec<&str> = metadata.split('x').collect();
+                if parts.len() == 6 {
+                    lock.width = parts[0].parse::<u32>().unwrap_or(lock.width);
+                    lock.height = parts[1].parse::<u32>().unwrap_or(lock.height);
+                    lock.format = parts[2].to_owned();
+                    lock.encoder = parts[3].to_owned();
+                    lock.server_fps.swap(parts[4].parse::<usize>().unwrap_or(lock.server_fps.load(std::sync::atomic::Ordering::Relaxed)), std::sync::atomic::Ordering::Relaxed);
+                    lock.server_total_frames.swap(parts[5].parse::<usize>().unwrap_or(lock.server_total_frames.load(std::sync::atomic::Ordering::Relaxed)), std::sync::atomic::Ordering::Relaxed);
+                }
+            }
         } else {
             missed += 1;
             println!("nothing recieved");
@@ -138,9 +149,32 @@ async fn mjpeg_html() -> Html<String> {
     Html(std::fs::read_to_string("index.html").unwrap())
 }
 
+
 async fn streamer_details(counter: Extension<Arc<Mutex<ImageData>>>) -> Json<serde_json::Value> {
     let lock = counter.lock().await;
-    let frame_num = lock.total_frames.load(std::sync::atomic::Ordering::Relaxed);
-    let fps = lock.fps.load(std::sync::atomic::Ordering::Relaxed);
-    Json(json!({ "frame": frame_num, "fps":  fps}))
+    let cframe_num = lock.client_total_frames.load(std::sync::atomic::Ordering::Relaxed);
+    let cfps = lock.client_fps.load(std::sync::atomic::Ordering::Relaxed);
+    let width = lock.width;
+    let height = lock.height;
+    let encoder = &lock.encoder;
+    let pixformat = &lock.format;
+    let sframe_num = lock.server_total_frames.load(std::sync::atomic::Ordering::Relaxed);
+    let sfps = lock.server_fps.load(std::sync::atomic::Ordering::Relaxed);
+
+    Json(json!({ 
+        "client frame": cframe_num, 
+        "client fps (avg)":  cfps,
+        "resolution": {
+            "width": width,
+            "height": height
+        },
+        "encoding": {
+            "encoder": encoder,
+            "pixel format": pixformat,
+        },
+        "server": {
+            "server frame": sframe_num,
+            "server fps (avg)": sfps,
+        }
+    }))
 }
