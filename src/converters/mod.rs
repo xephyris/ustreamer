@@ -42,7 +42,7 @@ pub fn nv12_to_rgb_yuv(buf: &[u8], width: usize, height: usize, rgb_buf: &mut Ve
         uv_stride: wu32, 
         width: wu32, 
         height: hu32 };
-    assert_eq!(buf.len(), ((width * height) * 15 / 10).try_into().unwrap());
+    assert_eq!(buf.len(), ((width * height) * 15 / 10) as usize);
     yuv_nv12_to_rgb(&biplanar, rgb_buf, width as u32 * 3, YuvRange::Limited, YuvStandardMatrix::Bt709, YuvConversionMode::Fast).unwrap();
 }
 
@@ -70,7 +70,7 @@ pub fn nv12_420_to_rgb_yuv(buf: &[u8], width: u32, height: u32) -> Vec<u8> {
         height,
     };
 
-    assert_eq!(buf.len(), ((width * height) * 15 / 10).try_into().unwrap());
+    assert_eq!(buf.len(), ((width * height) * 15 / 10) as usize);
     yuv420_to_rgb(&planar, &mut rgb_buf, width as u32 * 3, YuvRange::Limited, YuvStandardMatrix::Bt709).unwrap();
     rgb_buf
 
@@ -118,7 +118,7 @@ pub fn nv24_to_rgb_yuv(buf: &[u8], width: usize, height: usize, rgb_buf: &mut Ve
         uv_stride: wu32 * 2, 
         width: wu32, 
         height: hu32 };
-    assert_eq!(buf.len(), ((width * height) * 15 / 10).try_into().unwrap());
+    assert_eq!(buf.len(), ((width * height) * 15 / 10) as usize);
     yuv_nv24_to_rgb(&biplanar, rgb_buf, width as u32 * 3, YuvRange::Limited, YuvStandardMatrix::Bt709, YuvConversionMode::Fast).unwrap();
 }
 

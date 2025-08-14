@@ -2,7 +2,7 @@ use axum::{
     body::{Body, BodyDataStream}, http::header::{CONTENT_TYPE, TRANSFER_ENCODING}, response::{Html, Response}, routing::get, Extension, Router
 };
 use bytes::Bytes;
-use server::{ImageData, ImgStream};
+use img::{ImageData, ImgStream};
 use tokio::{net::TcpStream, pin, sync::Mutex, time::sleep};
 use futures::stream::{self, StreamExt};
 
@@ -10,12 +10,11 @@ use std::{io::Read, sync::{mpsc, Arc}, time::{Duration, Instant}};
 use axum::response::Json;
 use serde_json::json;
 
-
+pub mod img;
 
 // TODO: Transition primites to `atomic` to ensure thread safety
 
-#[tokio::main]
-async fn main() {
+pub async fn start_axum() {
     let shared = Arc::new(Mutex::new(ImageData::new())); 
     let app = Router::new() .route("/", get(mjpeg_html))
         .route("/stream", get(mjpeg_page))
@@ -98,7 +97,7 @@ async fn mjpeg_page(image: Extension<Arc<Mutex<ImageData>>>) -> Response {
         .header(CONTENT_TYPE, "multipart/x-mixed-replace; boundary=frame")
         .header(TRANSFER_ENCODING, "chunked")
         .body(Body::from_stream(stream))
-        .unwrap();
+        .unwrap()
 }
 
 async fn mjpeg_stream(socket: Arc<Mutex<TcpStream>>, image: Arc<Mutex<ImageData>>) {

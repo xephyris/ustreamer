@@ -1,6 +1,8 @@
 pub mod converters;
+pub mod server;
 #[cfg(mpp_accel)] 
 pub mod rk_mpp;
+
 
 pub struct Color {
     r: u8,

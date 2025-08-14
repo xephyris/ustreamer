@@ -6,6 +6,7 @@ use turbojpeg::Image;
 use turbojpeg::Subsamp;
 use ustreamer::bind_socket;
 
+use ustreamer::server;
 use ustreamer::StreamPixelFormat;
 use v4l2r::ioctl::PlaneMapping;
 use v4l2r::{device::{DeviceConfig, Device, queue::Queue}, ioctl::{self, mmap, qbuf, reqbufs, GFmtError, MemoryConsistency, RequestBuffers, V4l2Buffer}, memory::MemoryType, Format, PixelFormat, QueueType,};
@@ -20,6 +21,7 @@ use std::fs::File;
 #[cfg(mpp_accel)]
 use ustreamer::rk_mpp;
 
+// TODO Integrate server and client
 
 // set CPATH when building: 
 // export CPATH="/usr/include:/usr/include/aarch64-linux-gnu"
@@ -27,6 +29,9 @@ use ustreamer::rk_mpp;
 fn main() {
     
     let listener = bind_socket();
+
+    // Start client
+    init_axum_server();
 
     let dev = Arc::new(Device::open(&Path::new("/dev/video0"), DeviceConfig::new()).unwrap());
     dbg!(dev.caps());
@@ -133,7 +138,7 @@ fn main() {
                 println!("FPS: {} REPEATED FRAMES: {}", frames, rframes);
                 println!("Total Frames: {}", total_frames);
                 if fps != 0 {
-                    fps = fps + frames / 2;
+                    fps = (fps + frames) / 2;
                 } else {
                     fps = frames;
                 }
@@ -358,6 +363,15 @@ fn encode_jpeg(data: PlaneMapping, width:usize, height: usize, pixelformat: &str
         jpeg_data = compress(image, 80, Subsamp::Sub2x2).unwrap();
     }
     jpeg_data.to_vec()
+}
+
+fn init_axum_server() {
+    std::thread::spawn(|| {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            server::start_axum().await;
+        });
+    });
 }
 
 #[cfg(mpp_accel)]

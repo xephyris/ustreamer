@@ -32,7 +32,7 @@ fn main() {
             .expect("Couldn't write bindings!");
     }
     if Path::new("/dev/rga").exists() {
-        println!("cargo:rustc-cfg=rga_converters");
+        println!("cargo:rustc-cfg=rga_converter");
         println!("cargo:rustc-link-lib=stdc++");
         println!("cargo:rustc-link-search=native=rga");
         println!("cargo:rustc-link-lib=static=rga");
