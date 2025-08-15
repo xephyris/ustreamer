@@ -4,6 +4,8 @@ use tokio::{io::{AsyncReadExt, BufReader, Interest}, net::TcpStream, sync::Mutex
 
 use futures::{Stream, StreamExt};
 
+pub mod client;
+
 pub struct ImgStream {
     socket: Arc<Mutex<TcpStream>>,
     counter: usize,
@@ -32,30 +34,31 @@ impl ImgStream {
                 let mut len_buf = [0u8; 8];
                 open_socket.read_exact(&mut len_buf).await.unwrap_or_else(|_| {return 0;});
                 let len = usize::from_be_bytes(len_buf);
-                
-                let mut buffer = vec![0u8; len];
-                match open_socket.read_exact(&mut buffer).await {
-                    Ok(n) if n > 0 => {
+                // println!("len recieved {}", len);
+                if len < 10000*10000*3 {
+                    let mut buffer = vec![0u8; len];
+                    match open_socket.read_exact(&mut buffer).await {
+                        Ok(n) if n > 0 => {
+                        }
+                        _ => {return None},
                     }
-                    _ => {return None},
-                }
 
-            
-                let mut metadata_buf = [0u8; 512];
-                if open_socket.read_exact(&mut metadata_buf).await.is_err() {
-                    return None;
-                }
-                if metadata_buf[0] == 0 {
-                    Some(((buffer, None), state.clone()))
+                    let mut metadata_buf = [0u8; 1024];
+                    if open_socket.read_exact(&mut metadata_buf).await.is_err() {
+                        return None;
+                    }
+                    if metadata_buf[0] == 0 {
+                        Some(((buffer, None), state.clone()))
+                    } else {
+                        let stripped = metadata_buf.into_iter().take_while(|&b| b != 0).collect::<Vec<u8>>();
+                        let content = String::from_utf8(stripped).unwrap_or_default();
+                        // println!("{}", content);
+                        Some(((buffer, Some(content)), state.clone()))
+                    }
                 } else {
-                    let stripped = metadata_buf.into_iter().take_while(|&b| b != 0).collect::<Vec<u8>>();
-                    let content = String::from_utf8(stripped).unwrap_or_default();
-                    // println!("{}", content);
-                    Some(((buffer, Some(content)), state.clone()))
+                    Some(((Vec::new(), None), state.clone()))
                 }
-                
-
-                
+                                
             }
         ).fuse()
     }

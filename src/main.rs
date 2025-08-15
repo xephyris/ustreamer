@@ -28,13 +28,13 @@ use ustreamer::rk_mpp;
 // FFMPEG Recording :  ffmpeg -f v4l2 -pixel_format nv12 -video_size 1920x1080 -i /dev/video0        -c:v mjpeg -pix_fmt yuvj422p -f avi output1.avi
 fn main() {
     
-    let listener = bind_socket();
+    let (listener, port) = bind_socket();
 
     // Start client
-    init_axum_server();
+    // init_axum_server(port);
 
     let dev = Arc::new(Device::open(&Path::new("/dev/video0"), DeviceConfig::new()).unwrap());
-    dbg!(dev.caps());
+    // dbg!(dev.caps());
 
     let downscaling = false;
     let skip_repeats = false;
@@ -62,7 +62,7 @@ fn main() {
     // let new_format = Format{    
     //     width: width as u32,
     //     height: height as u32,
-    //     pixelformat: PixelFormat::from_fourcc(b"BGR3"),
+    //     pixelformat: PixelFormat::from_fourcc(b"BGR3"),  
     //     plane_fmt: Vec::new()
     // }.into();
 
@@ -115,6 +115,7 @@ fn main() {
         }
 
         else if stream.as_ref().is_none() {
+            // init_axum_server(port);
             match listener.accept() {
                 Ok((stm, addr)) => {
                     stream.replace(stm);
@@ -170,12 +171,12 @@ fn main() {
                 }
             };
 
-            println!("Number of PLANES {}", buf.num_planes());
+            // println!("Number of PLANES {}", buf.num_planes());
             let plane = buf.get_first_plane();
             let data = mmap(&filefd, *plane.data_offset.unwrap() as u32, *plane.length).unwrap();
             if data.data == last_buf && skip_repeats {
                 frames += 1;
-                println!("REPEATED FRAMES FOUND!!!");
+                // println!("REPEATED FRAMES FOUND!!!");
                 rframes += 1;
                 continue
             } else {
@@ -196,22 +197,37 @@ fn main() {
                 //     height: downscale_h, 
                 //     format: turbojpeg::PixelFormat::RGB};
                 // let jpeg_data = compress(image, 80, Subsamp::Sub2x2).unwrap();
-                println!("Streaming");
+                // println!("Streaming");
                 // std::fs::write("outputmpp24.jpg", &jpeg_data).unwrap();
                 if stream.is_some() {
 
                     let len = jpeg_data.len().to_be_bytes();
                     let mut open_stream = stream.take().unwrap();
-                    open_stream.write_all(&len).unwrap();
+                    open_stream.write_all(&len).unwrap_or_else(|err| {stream = None; eprintln!("stream dropped {}", err)});
                     // println!("length: {}", usize::from_be_bytes(len));
-                    open_stream.write_all(&jpeg_data).expect("Write Failed");
+                    // open_stream.write_all(&len).unwrap();
+                    // open_stream.write_all(&jpeg_data).unwrap();
+                    if let Err(e) = open_stream.write_all(&jpeg_data) {
+                        stream = None; 
+                        eprintln!("v0.1.0 stream dropped {}", e);
+                        continue
+                    }
                     if total_frames % 10 == 0 {
                         //Width x Height x Pixel Format x Encoder x Server FPS x Total Frames
                         let mut stream_metadata = format!("{width}x{height}x{pixelformat}x{encoder}x{fps}x{total_frames}").as_bytes().to_vec();
-                        stream_metadata.resize(512, 0u8);
-                        open_stream.write_all(&stream_metadata).expect("Write Failed");
+                        stream_metadata.resize(1024, 0u8);
+                        // open_stream.write_all(&stream_metadata).unwrap();
+                        if let Err(e) = open_stream.write_all(&stream_metadata) {
+                            stream = None; 
+                            eprintln!("v0.1.0 stream dropped {}", e);
+                            continue
+                        } 
                     } else {
-                        open_stream.write_all(&vec![0u8; 512]).expect("Write Failed"); // empty metadata block
+                        if let Err(e) = open_stream.write_all(&vec![0u8; 1024]) {
+                            stream = None; 
+                            eprintln!("v0.1.0 stream dropped {}", e);
+                            continue
+                        } 
                     };
                     // println!("Data length: {}", jpeg_data.len());
                     stream.replace(open_stream);
@@ -228,7 +244,7 @@ fn main() {
 
 
             total_frames += 1;
-            println!("Data length: {}", jpeg_data.len());
+            // println!("Data length: {}", jpeg_data.len());
 
             
             frames += 1;
@@ -297,7 +313,7 @@ fn encode_jpeg(data: PlaneMapping, width:usize, height: usize, pixelformat: &str
         // std::fs::write("nv24.raw", data.data.to_vec()).unwrap();
         jpeg_data = rk_mpp::encode_jpeg(data.data.to_vec(), width as u32, height as u32, 80, StreamPixelFormat::NV24).unwrap();
     }
-    println!("Frame processing time: {}", processing.elapsed().as_millis());
+    // println!("Frame processing time: {}", processing.elapsed().as_millis());
     jpeg_data
 }
 
@@ -365,11 +381,11 @@ fn encode_jpeg(data: PlaneMapping, width:usize, height: usize, pixelformat: &str
     jpeg_data.to_vec()
 }
 
-fn init_axum_server() {
-    std::thread::spawn(|| {
+fn init_axum_server(port: u32) {
+    std::thread::spawn(move || {
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async {
-            server::start_axum().await;
+            server::start_axum(port).await;
         });
     });
 }

@@ -20,6 +20,7 @@ use resize::Pixel::RGB8;
 use resize::Type::Triangle;
 use rgb::FromSlice;
 use std::net::TcpListener;
+use std::time::Duration;
 
 pub fn downscale(jpeg_rgb: &[u8], src_width: usize, src_height: usize) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
     let dst_width = 1920;
@@ -36,15 +37,24 @@ pub fn downscale(jpeg_rgb: &[u8], src_width: usize, src_height: usize) -> Result
     Ok(dst)
 }
 
-pub fn bind_socket() -> std::net::TcpListener {
-    match TcpListener::bind("127.0.1.1:7878") {
-        Ok(socket) => {
-            socket
-        }, 
-        Err(_) => {
-            panic!("Failed to bind to port. Is it in use")
+pub fn bind_socket() -> (std::net::TcpListener, u32) {
+    let socket: TcpListener;
+    let mut port = 7878;
+    loop {
+        match TcpListener::bind(format!("127.0.1.1:{}", port)) {
+            Ok(found) => {
+                socket = found;
+                eprintln!("port found! {}", port);
+                break;
+            }, 
+            Err(_) => {
+                eprintln!("Failed to bind to port. Is it in use?");
+                port += 1;
+            }
         }
+        std::thread::sleep(Duration::from_millis(500));
     }
+    (socket, port)
 }
 
 

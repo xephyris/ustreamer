@@ -3,10 +3,10 @@ use axum::{
 };
 use bytes::Bytes;
 use img::{ImageData, ImgStream};
-use tokio::{net::TcpStream, pin, sync::Mutex, time::sleep};
+use tokio::{io::{AsyncBufReadExt, AsyncWriteExt, BufReader}, net::{TcpStream, UnixListener, UnixStream}, pin, sync::Mutex, time::sleep};
 use futures::stream::{self, StreamExt};
 
-use std::{io::Read, sync::{mpsc, Arc}, time::{Duration, Instant}};
+use std::{io::Read, os::unix::fs::PermissionsExt, path::Path, sync::{mpsc, Arc}, time::{Duration, Instant}};
 use axum::response::Json;
 use serde_json::json;
 
@@ -14,33 +14,70 @@ pub mod img;
 
 // TODO: Transition primites to `atomic` to ensure thread safety
 
-pub async fn start_axum() {
-    let shared = Arc::new(Mutex::new(ImageData::new())); 
+pub async fn start_axum(port: u32) {
+    let shared = Arc::new(Mutex::new(ImageData::new(port))); 
+    let socket_path = "/run/kvmd/ustreamer.sock"; 
+    
+    e   ("Removing old socket...");
+    std::fs::remove_file(socket_path).ok();
+
+    eprintln!("Binding to new socket");
+    let sock_listener = UnixListener::bind(socket_path).unwrap();
+    std::fs::set_permissions(socket_path, std::fs::Permissions::from_mode(0o660)).unwrap();
+    let sock_stream = Arc::new(Mutex::new(None));
+    let clone = sock_stream.clone();
+    eprintln!("Binded to socket {}", socket_path);
+    tokio::spawn(async move {
+            loop {
+                match sock_listener.accept().await {
+                    Ok((stream, _addr)) => {
+                        let (reader, mut writer) = stream.into_split();
+                        let mut buf_reader = BufReader::new(reader);
+                        let mut line = String::new();
+
+                        if buf_reader.read_line(&mut line).await.is_ok() {
+                            if line.trim() == "FEATURES" {
+                                let response = "OK MJPEG\nOK RESOLUTION\nOK FRAMERATE\n";
+                                let _ = writer.write_all(response.as_bytes()).await;
+                            }
+                        }
+                        sock_stream.lock().await.replace(writer);
+                    }
+                    Err(e) => {
+                        eprintln!("Failed to accept connection: {}", e);
+                        break;
+                    }
+                }
+                sleep(Duration::from_millis(500)).await;
+            }
+        });
     let app = Router::new() .route("/", get(mjpeg_html))
         .route("/stream", get(mjpeg_page))
         .route("/state", get(streamer_details))
-        .layer(Extension(shared.clone()));
+        .layer(Extension(shared.clone()))
+        .layer(Extension(Arc::clone(&clone)));
 
     let (tx, rx) = mpsc::channel::<bool>();
 
     let reconnect = true;
     
     tokio::spawn(async move {
-        attach_socket(shared).await;
+        attach_socket(shared, port).await;
     });
      
 
     
 
-    let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();
-    axum::serve(listener, app).await.unwrap();
+    let listener = tokio::net::TcpListener::bind("localhost:8080").await.unwrap();
+
+    axum::serve(listener, app.clone().into_make_service()).await.unwrap();
 }
 
-async fn attach_socket(image_data: Arc<Mutex<ImageData>>) {
+async fn attach_socket(image_data: Arc<Mutex<ImageData>>, port: u32) {
     let shared_data = Arc::clone(&image_data);
     loop {
         let mut handle = None;
-        match TcpStream::connect("127.0.1.1:7878").await {
+        match TcpStream::connect(format!("127.0.1.1:{}", port)).await {
             Ok(found) => {
                 let socket = Arc::new(Mutex::new(found));
                 let clone = Arc::clone(&shared_data);
@@ -71,9 +108,10 @@ async fn attach_socket(image_data: Arc<Mutex<ImageData>>) {
 
 type SharedImage = Arc<Mutex<Option<Vec<u8>>>>;
 
-async fn mjpeg_page(image: Extension<Arc<Mutex<ImageData>>>) -> Response {
+async fn mjpeg_page(image: Extension<Arc<Mutex<ImageData>>>, sock_stream: Extension<Arc<Mutex<Option<UnixStream>>>>) -> Response {
     let stream = stream::unfold((), move |_| {
         let image = image.clone();
+        let value = sock_stream.clone();
         async move {
             // sleep(Duration::from_millis(20)).await;
 
@@ -85,11 +123,23 @@ async fn mjpeg_page(image: Extension<Arc<Mutex<ImageData>>>) -> Response {
                 frame.extend_from_slice(&img);
                 frame.extend_from_slice(b"\r\n");
             }
+            eprintln!("frame sent to socket");
 
+            if let Some(mut sock) = {
+                let mut guard = value.lock().await;
+                guard.take()
+            } {
+                if let Err(e) = sock.write_all(&frame).await {
+                    eprintln!("Socket write failed: {}", e);
+                }
 
+                let mut guard = value.lock().await;
+                guard.replace(sock);
+            }
 
             Some((Ok::<_, std::io::Error>(Bytes::from(frame)), ()))
         }
+
     });
 
     Response::builder()
@@ -158,11 +208,18 @@ async fn streamer_details(counter: Extension<Arc<Mutex<ImageData>>>) -> Json<ser
     let pixformat = &lock.format;
     let sframe_num = lock.server_total_frames.load(std::sync::atomic::Ordering::Relaxed);
     let sfps = lock.server_fps.load(std::sync::atomic::Ordering::Relaxed);
+    let port = lock.server_port;
+    let status = "ok".to_string();
+    let fps = 30;
+    let resolution = format!("{}x{}", width, height);
 
     Json(json!({ 
+        "status": status,
+        "fps": fps,
+        "resolution": resolution,
         "client frame": cframe_num, 
         "client fps (avg)":  cfps,
-        "resolution": {
+        "resolutions": {
             "width": width,
             "height": height
         },
@@ -173,6 +230,7 @@ async fn streamer_details(counter: Extension<Arc<Mutex<ImageData>>>) -> Json<ser
         "server": {
             "server frame": sframe_num,
             "server fps (avg)": sfps,
+            "port": port,
         }
     }))
 }

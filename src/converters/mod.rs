@@ -104,7 +104,7 @@ pub fn nv24_444_to_nv12(buf: &[u8], width: u32, height: u32) -> Vec<u8> {
 
     
     dst[y_size as usize..].copy_from_slice(&dst_uv);
-    println!("conversion time: {}", start.elapsed().as_millis());
+    // println!("conversion time: {}", start.elapsed().as_millis());
     dst
 }
 

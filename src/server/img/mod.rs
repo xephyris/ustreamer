@@ -77,12 +77,13 @@ pub struct ImageData{
     pub client_total_frames: Arc<AtomicUsize>,
     pub server_fps: Arc<AtomicUsize>,
     pub server_total_frames: Arc<AtomicUsize>,
+    pub server_port: u32,
     pub encoder: String,
     pub format: String,
 }
 
 impl ImageData {
-    pub fn new() -> Self {
+    pub fn new(port: u32) -> Self {
         ImageData {
             frame: None, 
             width: 1920, 
@@ -91,6 +92,7 @@ impl ImageData {
             client_total_frames: Arc::new(AtomicUsize::new(0)),
             server_fps: Arc::new(AtomicUsize::new(0)), 
             server_total_frames: Arc::new(AtomicUsize::new(0)),
+            server_port: port,
             encoder: String::new(),
             format: String::from(""),
         }
