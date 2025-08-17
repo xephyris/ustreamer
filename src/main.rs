@@ -200,35 +200,28 @@ fn main() {
                 // println!("Streaming");
                 // std::fs::write("outputmpp24.jpg", &jpeg_data).unwrap();
                 if stream.is_some() {
+                    let mut frame = Vec::new();
 
                     let len = jpeg_data.len().to_be_bytes();
                     let mut open_stream = stream.take().unwrap();
-                    open_stream.write_all(&len).unwrap_or_else(|err| {stream = None; eprintln!("stream dropped {}", err)});
-                    // println!("length: {}", usize::from_be_bytes(len));
-                    // open_stream.write_all(&len).unwrap();
-                    // open_stream.write_all(&jpeg_data).unwrap();
-                    if let Err(e) = open_stream.write_all(&jpeg_data) {
-                        stream = None; 
-                        eprintln!("v0.1.0 stream dropped {}", e);
-                        continue
-                    }
+                    frame.extend_from_slice(&len);
+                    frame.extend_from_slice(&jpeg_data);
+
                     if total_frames % 10 == 0 {
                         //Width x Height x Pixel Format x Encoder x Server FPS x Total Frames
                         let mut stream_metadata = format!("{width}x{height}x{pixelformat}x{encoder}x{fps}x{total_frames}").as_bytes().to_vec();
                         stream_metadata.resize(1024, 0u8);
                         // open_stream.write_all(&stream_metadata).unwrap();
-                        if let Err(e) = open_stream.write_all(&stream_metadata) {
-                            stream = None; 
-                            eprintln!("v0.1.0 stream dropped {}", e);
-                            continue
-                        } 
+                        frame.extend_from_slice(&stream_metadata);
                     } else {
-                        if let Err(e) = open_stream.write_all(&vec![0u8; 1024]) {
-                            stream = None; 
-                            eprintln!("v0.1.0 stream dropped {}", e);
-                            continue
-                        } 
+                        frame.extend_from_slice(&vec![0u8; 1024]);
                     };
+
+                    if let Err(e) = open_stream.write_all(&frame) {
+                        stream = None; 
+                        eprintln!("v0.1.0 stream dropped {}", e);
+                        continue
+                    } 
                     // println!("Data length: {}", jpeg_data.len());
                     stream.replace(open_stream);
                 }
@@ -240,7 +233,7 @@ fn main() {
                 //     stream.replace(open_stream);
                 // }
                 
-                    // std::thread::sleep(Duration::from_millis(2000));
+                // std::thread::sleep(Duration::from_millis(10));
 
 
             total_frames += 1;

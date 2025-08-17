@@ -18,7 +18,7 @@ pub async fn start_axum(port: u32) {
     let shared = Arc::new(Mutex::new(ImageData::new(port))); 
     let socket_path = "/run/kvmd/ustreamer.sock"; 
     
-    e   ("Removing old socket...");
+    println!("Removing old socket...");
     std::fs::remove_file(socket_path).ok();
 
     eprintln!("Binding to new socket");

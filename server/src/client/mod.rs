@@ -1,10 +1,10 @@
 use std::time::Instant;
 
-use serde_json::json;
+use serde_json::{json, Value};
 use sha2::Digest;
 
 #[derive(Debug, Clone)]
-struct ClientDetails {
+pub struct ClientDetails {
     id: String,
     connected_at: Instant,
     last_frame_time: Instant,
@@ -39,7 +39,7 @@ impl ClientDetails {
             id: generate_id(), 
             connected_at: Instant::now(), 
             last_frame_time: Instant::now(), 
-            fps: 30, 
+            fps: 0, 
             extra_headers: false, 
             advance_headers: false, 
             dual_final_frames: false, 
@@ -48,8 +48,12 @@ impl ClientDetails {
         }
     }
 
+    pub fn update_fps(&mut self, fps: u32) {
+        self.fps = fps;
+    }
+
     pub fn to_json(&self) -> serde_json::Value {
-        json!({
+        let json = json!({
             self.id.clone(): {
                 "fps": self.fps,
                 "extra_headers": self.extra_headers,
@@ -58,7 +62,9 @@ impl ClientDetails {
                 "zero_data": self.zero_data,
                 "key": self.key,
             } 
-        })
+        });
+        println!("json is this {:?}", json.clone());
+        json
     }
 }
 
@@ -78,17 +84,20 @@ impl Clients {
         Clients {
             queued: 0,
             clients: 0,
-            max_clients: 5,
+            max_clients: 1,
             stats: Vec::new(),
         }
     }
 
-    pub fn add_client(&mut self, key: Option<String>) {
+    pub fn add_client(&mut self, key: Option<String>) -> String {
         self.clients += 1;
-        self.stats.push(ClientDetails::new(key));
+        let client = ClientDetails::new(key);
+        let id = client.id.clone();
+        self.stats.push(client);
+        id
     } 
 
-    pub fn add_client_from_header(&mut self, header: String) -> String {
+    pub fn add_client_from_header(&mut self, header: String) -> (String, String) {
         self.clients += 1;
         if self.clients > self.max_clients {
             self.stats.remove(0);
@@ -96,10 +105,11 @@ impl Clients {
         }
         let client = ClientDetails::from_header(header);
         let id = client.id.clone();
+        let key = client.key.clone();
         self.stats.push(client);
         println!("client added {:?}", self.stats.last());
         println!("Client count {}", self.clients);
-        id
+        (id, key)
     } 
 
     pub fn remove_client(&mut self, key: Option<String>) {
@@ -130,14 +140,24 @@ impl Clients {
     }
 
     pub fn to_json(&self) -> serde_json::Value {
-        let stats: Vec<String> = self.stats.iter().map(| client| client.to_json().to_string()).collect();
-        let values = stats.join(",");
-        let values = format!("{{{}}}", values);
+        let stats: Vec<Value> = self.stats.iter().map(| client| client.to_json()).collect();
+        let values: Value = merge_json(stats);
+        // let values = format!("{{{}}}", values);
         json!({
             "queued_fps": self.queued,
             "clients": self.clients,
-            "client_stat": values,
+            "clients_stat": values,
         })
+    }
+
+    pub fn get_client_from_header(&mut self, header: String) -> Option<&mut ClientDetails>{
+        let key = parse_key_from_header(header).unwrap();
+        for client in self.stats.iter_mut() {
+            if client.key == key {
+                return Some(client);
+            } 
+        }
+        None
     }
 }
 
@@ -153,4 +173,16 @@ fn parse_key_from_header(header: String) -> Option<String> {
             Some(url.get(1).unwrap().clone())
         }
     }
+}
+
+fn merge_json(json_vals: Vec<serde_json::Value>) -> serde_json::Value {
+    let mut merged = json!({});
+    for json_val in json_vals {
+        if let Value::Object(map) = json_val {
+            if let Some((key, value)) = map.iter().next() {
+                merged[key] = value.clone();
+            }
+        }
+    }
+    merged
 }

@@ -1,18 +1,18 @@
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
-use tokio::{io::{AsyncReadExt, BufReader, Interest}, net::TcpStream, sync::Mutex};
+use tokio::{io::{AsyncReadExt, BufReader, Interest}, net::TcpStream, sync::RwLock};
 
 use futures::{Stream, StreamExt};
 
 pub mod client;
 
 pub struct ImgStream {
-    socket: Arc<Mutex<TcpStream>>,
+    socket: Arc<RwLock<TcpStream>>,
     counter: usize,
 }
 
 impl ImgStream {
-    pub fn new(socket: Arc<Mutex<TcpStream>>) -> Self {
+    pub fn new(socket: Arc<RwLock<TcpStream>>) -> Self {
         ImgStream { 
             socket, 
             counter: 0,
@@ -22,14 +22,17 @@ impl ImgStream {
     pub fn get_stream(&mut self) -> impl Stream<Item = (Vec<u8>, Option<String>)> {
         self.counter += 1;
         futures::stream::unfold(
-            Arc::new(Mutex::new(StreamState {
+            Arc::new(RwLock::new(StreamState {
                 socket: self.socket.clone(),
                 counter: 0,
             })),  
             move | mut state| async move {
-                let mut state_guard =  state.lock().await;
+                
+                let mut state_guard = state.write().await;
                 state_guard.counter += 1;
-                let mut socket_guard = state_guard.socket.lock().await;
+                
+                tokio::time::sleep(Duration::from_millis(20)).await;
+                let mut socket_guard = state_guard.socket.write().await;
                 let mut open_socket = BufReader::new(&mut *socket_guard);
                 let mut len_buf = [0u8; 8];
                 open_socket.read_exact(&mut len_buf).await.unwrap_or_else(|_| {return 0;});
@@ -43,22 +46,26 @@ impl ImgStream {
                         _ => {return None},
                     }
 
+                    // let test_vec = std::fs::read("ustreaner.jpg").unwrap();
+
                     let mut metadata_buf = [0u8; 1024];
                     if open_socket.read_exact(&mut metadata_buf).await.is_err() {
                         return None;
                     }
                     if metadata_buf[0] == 0 {
                         Some(((buffer, None), state.clone()))
+                        // Some(((test_vec, None), state.clone()))
                     } else {
                         let stripped = metadata_buf.into_iter().take_while(|&b| b != 0).collect::<Vec<u8>>();
                         let content = String::from_utf8(stripped).unwrap_or_default();
                         // println!("{}", content);
                         Some(((buffer, Some(content)), state.clone()))
+                        //  Some(((test_vec, Some(content)), state.clone()))
                     }
                 } else {
-                    Some(((Vec::new(), None), state.clone()))
+                   Some(((Vec::new(), None), state.clone()))
                 }
-                                
+                                                
             }
         ).fuse()
     }
@@ -66,7 +73,7 @@ impl ImgStream {
 }
 
 struct StreamState {
-    socket: Arc<Mutex<TcpStream>>,
+    socket: Arc<RwLock<TcpStream>>,
     counter: usize,
 }
 
