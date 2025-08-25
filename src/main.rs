@@ -22,6 +22,12 @@ use std::fs::File;
 use ustreamer::rk_mpp;
 
 // TODO Integrate server and client
+// TODO Improve Frame retention between image server and web server 
+// * (reduce lost frames from when sync between image server + web server is disrupted)
+// ? (Send Arc<RwLock<Vec<u8>>> to axum server on initialization)
+// TODO Integrate features with pikvm API (fps, dual-final frames, etc)
+// TODO Implement support for single planar formats & native mjpeg
+// ? Separate rk_mpp and rga to new project?
 
 // set CPATH when building: 
 // export CPATH="/usr/include:/usr/include/aarch64-linux-gnu"
