@@ -179,7 +179,7 @@ async fn mjpeg_stream(socket: Arc<RwLock<TcpStream>>, image: Arc<RwLock<ImageDat
             lock.client_total_frames.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             fps += 1;
             missed = 0;
-            // println!("Frames recieved: {}", lock.client_total_frames.load(std::sync::atomic::Ordering::Relaxed));
+            println!("Frames recieved: {}", lock.client_total_frames.load(std::sync::atomic::Ordering::Relaxed));
             if let Some(metadata) = img_data.1 {
                 let parts: Vec<&str> = metadata.split('x').collect();
                 if parts.len() == 6 {

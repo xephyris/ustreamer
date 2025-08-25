@@ -39,7 +39,7 @@ impl ClientDetails {
             id: generate_id(), 
             connected_at: Instant::now(), 
             last_frame_time: Instant::now(), 
-            fps: 0, 
+            fps: 30, 
             extra_headers: false, 
             advance_headers: false, 
             dual_final_frames: false, 
@@ -82,9 +82,9 @@ pub struct Clients {
 impl Clients {
     pub fn new() -> Self {
         Clients {
-            queued: 0,
+            queued: 30,
             clients: 0,
-            max_clients: 1,
+            max_clients: 2,
             stats: Vec::new(),
         }
     }

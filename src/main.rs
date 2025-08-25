@@ -199,13 +199,26 @@ fn main() {
                 // let jpeg_data = compress(image, 80, Subsamp::Sub2x2).unwrap();
                 // println!("Streaming");
                 // std::fs::write("outputmpp24.jpg", &jpeg_data).unwrap();
+                println!("Saving frame");
                 if stream.is_some() {
                     let mut frame = Vec::new();
 
-                    let len = jpeg_data.len().to_be_bytes();
+                    let len: [u8; 8] = jpeg_data.len().to_be_bytes();
                     let mut open_stream = stream.take().unwrap();
-                    frame.extend_from_slice(&len);
-                    frame.extend_from_slice(&jpeg_data);
+                    // frame.extend_from_slice(&len);
+                    // frame.extend_from_slice(&jpeg_data);
+                    println!("{:?}", len);
+                    if let Err(e) = open_stream.write_all(&len) {
+                        stream = None; 
+                        eprintln!("v0.1.0 stream dropped {}", e);
+                        continue
+                    } 
+                    
+                    if let Err(e) = open_stream.write_all(&jpeg_data) {
+                        stream = None; 
+                        eprintln!("v0.1.0 stream dropped {}", e);
+                        continue
+                    } 
 
                     if total_frames % 10 == 0 {
                         //Width x Height x Pixel Format x Encoder x Server FPS x Total Frames
@@ -233,7 +246,7 @@ fn main() {
                 //     stream.replace(open_stream);
                 // }
                 
-                // std::thread::sleep(Duration::from_millis(10));
+                std::thread::sleep(Duration::from_millis(10));
 
 
             total_frames += 1;
