@@ -479,6 +479,61 @@ async fn connection_handler(stream: UnixStream, shared_clone: Arc<RwLock<ImageDa
             writer.flush().await;
             writer.shutdown().await;
             println!("Status JSON sent and connection closed");
+        } else if line.starts_with("GET /ustate") {
+            let lock = shared_clone.read().await;
+            let cframe_num = lock.client_total_frames.load(std::sync::atomic::Ordering::Relaxed);
+            let cfps = lock.client_fps.load(std::sync::atomic::Ordering::Relaxed);
+            let width = lock.width;
+            let height = lock.height;
+            let encoder = &lock.encoder;
+            let pixformat = &lock.format;
+            let sframe_num = lock.server_total_frames.load(std::sync::atomic::Ordering::Relaxed);
+            let sfps = lock.server_fps.load(std::sync::atomic::Ordering::Relaxed);
+            let port = 7878;
+            let status = "ok".to_string();
+            let fps = 30;
+            let resolution = format!("{}x{}", width, height);
+
+            let json_body = Json(json!({ 
+                "status": status,
+                "fps": fps,
+                "resolution": resolution,
+                "client frame": cframe_num, 
+                "client fps (avg)":  cfps,
+                "resolutions": {
+                    "width": width,
+                    "height": height
+                },
+                "encoding": {
+                    "encoder": encoder,
+                    "pixel format": pixformat,
+                },
+                "server": {
+                    "server frame": sframe_num,
+                    "server fps (avg)": sfps,
+                    "port": port,
+                }
+            })).to_string();
+            let now = Utc::now();
+            let date = now.format_with_items(StrftimeItems::new("%a, %d %b %Y %H:%M:%S GMT")).to_string();
+
+            let mut response = Vec::new();
+            response.extend_from_slice(b"HTTP/1.1 200 OK\r\n");
+            response.extend_from_slice(b"Content-Type: application/json\r\n");
+            response.extend_from_slice(b"Date: ");
+            response.extend_from_slice(date.as_bytes());
+            response.extend_from_slice(b"\r\nContent-Length: ");
+            response.extend_from_slice(json_body.len().to_string().as_bytes());
+            response.extend_from_slice(b"\r\n\r\n");
+            response.extend_from_slice(json_body.as_bytes());
+            println!("Sending response:\n{}", String::from_utf8_lossy(&response));
+        
+            if let Err(e) = writer.write_all(&response).await {
+                eprintln!("Failed to send JSON response: {}", e);
+            }
+            writer.flush().await;
+            writer.shutdown().await;
+            println!("Ustreamer Status JSON sent and connection closed");
         } else {
             println!("Tried accessing {}", line);
             let _ = writer.write_all(b"HTTP/1.1 404 Not Found\r\n\r\n").await;
