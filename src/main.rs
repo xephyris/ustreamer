@@ -6,6 +6,7 @@ use turbojpeg::Image;
 use turbojpeg::Subsamp;
 use ustreamer::bind_socket;
 
+use ustreamer::lock::StreamLock;
 use ustreamer::server;
 use ustreamer::StreamPixelFormat;
 use v4l2r::ioctl::PlaneMapping;
@@ -33,7 +34,7 @@ use ustreamer::rk_mpp;
 // export CPATH="/usr/include:/usr/include/aarch64-linux-gnu"
 // FFMPEG Recording :  ffmpeg -f v4l2 -pixel_format nv12 -video_size 1920x1080 -i /dev/video0        -c:v mjpeg -pix_fmt yuvj422p -f avi output1.avi
 fn main() {
-    
+    let lock = StreamLock::aquire_lock("/run/kvmd/ustreamer.lock".to_string());
     let (listener, port) = bind_socket();
 
     // Start client
@@ -94,7 +95,7 @@ fn main() {
 
     let mut stream = None;
 
-    let mut encoder = get_encoder();
+    let encoder = get_encoder();
 
     let mut fps = 0;
     let mut total_frames = 0;

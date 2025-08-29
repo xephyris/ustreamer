@@ -1,5 +1,6 @@
 pub mod converters;
 pub mod server;
+pub mod lock;
 #[cfg(mpp_accel)] 
 pub mod rk_mpp;
 
