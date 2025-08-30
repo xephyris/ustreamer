@@ -320,10 +320,19 @@ async fn connection_handler(stream: UnixStream, shared_clone: Arc<RwLock<ImageDa
             let mut interval = tokio::time::interval(Duration::from_millis(33));
             let mut first = true;
             let mut count = 0;
+
+            let mut fps = 0;
+            let mut start = Instant::now();
             loop {
                 interval.tick().await;
                 count += 1;
-               
+
+                if start.elapsed() > Duration::from_secs(1) {
+                    start = Instant::now();
+                    client_clone.write().await.update_fps_from_header(line.clone(), fps);
+                    fps = 0;
+                }
+                fps += 1;
                 let mut frame;
                 if prev_frame.is_none() {
                     let lock = stream_shared.read().await;

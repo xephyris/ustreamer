@@ -1,4 +1,4 @@
-use std::time::Instant;
+use std::{collections::HashMap, time::Instant};
 
 use serde_json::{json, Value};
 use sha2::Digest;
@@ -76,7 +76,8 @@ pub struct Clients {
     pub queued: u32,
     pub clients: u32,
     pub max_clients: u32,
-    pub stats: Vec<ClientDetails>,
+    pub stats: HashMap<String, ClientDetails>,
+    age: Vec<String>,
 }
 
 impl Clients {
@@ -85,62 +86,52 @@ impl Clients {
             queued: 30,
             clients: 0,
             max_clients: 2,
-            stats: Vec::new(),
+            stats: HashMap::new(),
+            age: Vec::new(),
         }
     }
 
     pub fn add_client(&mut self, key: Option<String>) -> String {
         self.clients += 1;
-        let client = ClientDetails::new(key);
+        let client = ClientDetails::new(key.clone());
         let id = client.id.clone();
-        self.stats.push(client);
+        self.stats.insert(key.clone().unwrap_or(String::from("0")), client);
+        self.age.push(key.unwrap_or(String::from("0")));
         id
     } 
 
     pub fn add_client_from_header(&mut self, header: String) -> (String, String) {
         self.clients += 1;
         if self.clients > self.max_clients {
-            self.stats.remove(0);
+            self.stats.remove(self.age.get(0).unwrap());
+            self.age.remove(0);
             self.clients -= 1;
         }
         let client = ClientDetails::from_header(header);
         let id = client.id.clone();
         let key = client.key.clone();
-        self.stats.push(client);
-        println!("client added {:?}", self.stats.last());
+        self.stats.insert(key.clone(), client.clone());
+        self.age.push(key.clone());
+        println!("client added {:?}", client);
         println!("Client count {}", self.clients);
         (id, key)
     } 
 
     pub fn remove_client(&mut self, key: Option<String>) {
-        let mut index = 0;
-        while index < self.stats.len() {
-            if self.stats.get(index).unwrap().key == key.clone().unwrap_or(String::from("0")) {
-                self.clients -= 1;
-                self.stats.remove(index);
-                break;
-            } else {
-                index += 1;
-            }
-        }
+        if let Some(_) = self.stats.remove(&key.clone().unwrap_or(String::from("0"))) {
+            self.clients -= 1;
+        } 
     }
 
     pub fn remove_client_from_header(&mut self, header: String) {
         let key = parse_key_from_header(header);
-        let mut index = 0;
-        while index < self.stats.len() {
-            if self.stats.get(index).unwrap().key == key.clone().unwrap_or(String::from("0")) {
-                self.clients -= 1;
-                self.stats.remove(index);
-                break;
-            } else {
-                index += 1;
-            }
-        }
+        if let Some(_) = self.stats.remove(&key.clone().unwrap_or(String::from("0"))) {
+            self.clients -= 1;
+        } 
     }
 
     pub fn to_json(&self) -> serde_json::Value {
-        let stats: Vec<Value> = self.stats.iter().map(| client| client.to_json()).collect();
+        let stats: Vec<Value> = self.stats.iter().map(| client| client.1.to_json()).collect();
         let values: Value = merge_json(stats);
         // let values = format!("{{{}}}", values);
         json!({
@@ -151,13 +142,15 @@ impl Clients {
     }
 
     pub fn get_client_from_header(&mut self, header: String) -> Option<&mut ClientDetails>{
-        let key = parse_key_from_header(header).unwrap();
-        for client in self.stats.iter_mut() {
-            if client.key == key {
-                return Some(client);
-            } 
+        let key = parse_key_from_header(header).unwrap_or("0".to_owned());
+        self.stats.get_mut(&key)
+    }
+
+    pub fn update_fps_from_header(&mut self, header: String, fps: u32) {
+        let key = parse_key_from_header(header).unwrap_or("0".to_owned());
+        if let Some(client) = self.stats.get_mut(&key) {
+            client.update_fps(fps);
         }
-        None
     }
 }
 
