@@ -34,11 +34,15 @@ use ustreamer::rk_mpp;
 // export CPATH="/usr/include:/usr/include/aarch64-linux-gnu"
 // FFMPEG Recording :  ffmpeg -f v4l2 -pixel_format nv12 -video_size 1920x1080 -i /dev/video0        -c:v mjpeg -pix_fmt yuvj422p -f avi output1.avi
 fn main() {
+    let embedded = false;
+
     let lock = StreamLock::aquire_lock("/run/kvmd/ustreamer.lock".to_string());
     let (listener, port) = bind_socket();
 
     // Start client
-    // init_axum_server(port);
+    if embedded {
+        init_axum_server(port);
+    }
 
     let dev = Arc::new(Device::open(&Path::new("/dev/video0"), DeviceConfig::new()).unwrap());
     // dbg!(dev.caps());
@@ -122,7 +126,9 @@ fn main() {
         }
 
         else if stream.as_ref().is_none() {
-            // init_axum_server(port);
+            if embedded {
+                init_axum_server(port);
+            }
             match listener.accept() {
                 Ok((stm, addr)) => {
                     stream.replace(stm);
