@@ -34,7 +34,7 @@ use ustreamer::rk_mpp;
 // export CPATH="/usr/include:/usr/include/aarch64-linux-gnu"
 // FFMPEG Recording :  ffmpeg -f v4l2 -pixel_format nv12 -video_size 1920x1080 -i /dev/video0        -c:v mjpeg -pix_fmt yuvj422p -f avi output1.avi
 fn main() {
-    let embedded = false;
+    let embedded = true;
 
     let lock = StreamLock::aquire_lock("/run/kvmd/ustreamer.lock".to_string());
     let (listener, port) = bind_socket();
@@ -212,7 +212,7 @@ fn main() {
                 // let jpeg_data = compress(image, 80, Subsamp::Sub2x2).unwrap();
                 // println!("Streaming");
                 // std::fs::write("outputmpp24.jpg", &jpeg_data).unwrap();
-                println!("Saving frame");
+                // println!("Saving frame");
                 if stream.is_some() {
                     let mut frame = Vec::new();
 
@@ -220,7 +220,7 @@ fn main() {
                     let mut open_stream = stream.take().unwrap();
                     // frame.extend_from_slice(&len);
                     // frame.extend_from_slice(&jpeg_data);
-                    println!("{:?}", len);
+                    // println!("{:?}", len);
                     if let Err(e) = open_stream.write_all(&len) {
                         stream = None; 
                         eprintln!("v0.1.0 stream dropped {}", e);

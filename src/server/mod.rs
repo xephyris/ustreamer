@@ -170,21 +170,22 @@ async fn mjpeg_stream(socket: Arc<RwLock<TcpStream>>, image: Arc<RwLock<ImageDat
     let mut frames = Instant::now();
     let mut missed = 0;
     loop {
-        let mut lock = image.write().await;
-        let mut start = Instant::now();
-        if frames.elapsed() >= Duration::from_secs(1) {
-            lock.client_fps.swap((lock.client_fps.load(std::sync::atomic::Ordering::Relaxed) + fps) / 2, std::sync::atomic::Ordering::Relaxed);
-            fps = 0;
-            frames = Instant::now();
-        }
+        // let mut start = Instant::now();
         if let Some(img_data) = stream.next().await{
+            let mut lock = image.write().await;
+            if frames.elapsed() >= Duration::from_secs(1) {
+                lock.client_fps.swap((lock.client_fps.load(std::sync::atomic::Ordering::Relaxed) + fps) / 2, std::sync::atomic::Ordering::Relaxed);
+                fps = 0;
+                frames = Instant::now();
+            }
+            
+            fps += 1;
+            missed = 0;
             if !img_data.0.is_empty() {
                 lock.frame = Some(img_data.0);
             }
             lock.client_total_frames.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            fps += 1;
-            missed = 0;
-            println!("Frames recieved: {}", lock.client_total_frames.load(std::sync::atomic::Ordering::Relaxed));
+            // println!("Frames recieved: {}", lock.client_total_frames.load(std::sync::atomic::Ordering::Relaxed));
             if let Some(metadata) = img_data.1 {
                 let parts: Vec<&str> = metadata.split('x').collect();
                 if parts.len() == 6 {
@@ -422,7 +423,9 @@ async fn connection_handler(stream: UnixStream, shared_clone: Arc<RwLock<ImageDa
             client_clone.write().await.remove_client_from_header(line.clone());
 
         } else if line.starts_with("GET /state") {
+            println!("Recieved Request. Aquiring img lock");
             let lock = shared_clone.read().await;
+            println!("lock aquired");
             let cframe_num = lock.client_total_frames.load(std::sync::atomic::Ordering::Relaxed);
             let cfps = lock.client_fps.load(std::sync::atomic::Ordering::Relaxed);
             let width = lock.width;

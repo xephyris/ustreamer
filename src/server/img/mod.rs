@@ -36,9 +36,9 @@ impl ImgStream {
                 
                 let mut len_buf = [0u8; 8];
                 open_socket.read_exact(&mut len_buf).await.unwrap_or_else(|_| {return 0;});
-                println!("{:?}", len_buf)       ;
+                // println!("{:?}", len_buf)       ;
                 let len = usize::from_be_bytes(len_buf);
-                println!("len recieved {}", len);
+                // println!("len recieved {}", len);
                 
                 if len < 10000*10000*3 {
                     let mut buffer = vec![0u8; len];
