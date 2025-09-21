@@ -81,7 +81,7 @@ pub async fn start_axum(port: u32) {
         
 
         let listener = tokio::net::TcpListener::bind("0.0.0.0:8080").await.unwrap();
-
+        println!("{:?}", listener.local_addr());
         axum::serve(listener, app.clone().into_make_service()).await.unwrap();
     }
 }

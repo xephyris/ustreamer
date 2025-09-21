@@ -39,9 +39,11 @@ fn main() {
     let lock = StreamLock::aquire_lock("/run/kvmd/ustreamer.lock".to_string());
     let (listener, port) = bind_socket();
 
+    let mut started = false;
     // Start client
     if embedded {
         init_axum_server(port);
+        started = true;
     }
 
     let dev = Arc::new(Device::open(&Path::new("/dev/video0"), DeviceConfig::new()).unwrap());
@@ -126,7 +128,7 @@ fn main() {
         }
 
         else if stream.as_ref().is_none() {
-            if embedded {
+            if embedded && !started {
                 init_axum_server(port);
             }
             match listener.accept() {
