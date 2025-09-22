@@ -8,16 +8,19 @@ use ustreamer::bind_socket;
 
 use ustreamer::lock::StreamLock;
 use ustreamer::server;
+use ustreamer::server::img::ImageData;
 use ustreamer::StreamPixelFormat;
 use v4l2r::ioctl::PlaneMapping;
 use v4l2r::{device::{DeviceConfig, Device, queue::Queue}, ioctl::{self, mmap, qbuf, reqbufs, GFmtError, MemoryConsistency, RequestBuffers, V4l2Buffer}, memory::MemoryType, Format, PixelFormat, QueueType,};
 use std::io::Write;
 use std::os::fd::{AsFd, AsRawFd};
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc};
 use std::time::Duration;
 use std::time::Instant;
 use std::fs::File;
+
+use tokio::sync::RwLock;
 
 #[cfg(mpp_accel)]
 use ustreamer::rk_mpp;
@@ -33,16 +36,20 @@ use ustreamer::rk_mpp;
 // set CPATH when building: 
 // export CPATH="/usr/include:/usr/include/aarch64-linux-gnu"
 // FFMPEG Recording :  ffmpeg -f v4l2 -pixel_format nv12 -video_size 1920x1080 -i /dev/video0        -c:v mjpeg -pix_fmt yuvj422p -f avi output1.avi
-fn main() {
+#[tokio::main]
+async fn main() {
     let embedded = true;
-
+    let shared = Arc::new(RwLock::new(ImageData::new())); 
+    let shared_image_clone = shared.clone();
+    let shared_clone = shared.clone();
     let lock = StreamLock::aquire_lock("/run/kvmd/ustreamer.lock".to_string());
-    let (listener, port) = bind_socket();
+    let (listener   , port) = bind_socket();
 
     let mut started = false;
+    let shared = Arc::new(RwLock::new(ImageData::new()));
     // Start client
     if embedded {
-        init_axum_server(port);
+        init_axum_server(port, shared_clone.clone());
         started = true;
     }
 
@@ -129,7 +136,7 @@ fn main() {
 
         else if stream.as_ref().is_none() {
             if embedded && !started {
-                init_axum_server(port);
+                init_axum_server(port, shared_clone.clone());
             }
             match listener.accept() {
                 Ok((stm, addr)) => {
@@ -200,66 +207,66 @@ fn main() {
             
             let jpeg_data = encode_jpeg(data, width, height, &pixelformat);
                 
-
-                // if downscaling {
-                //     rgb_buf = ustreamer::downscale(&rgb_buf, downscale_w, downscale_h).unwrap();
-                // }
-
-                // let image = Image{ 
-                //     pixels: rgb_buf.as_slice(), 
-                //     width: downscale_w, 
-                //     pitch: downscale_w * 3, 
-                //     height: downscale_h, 
-                //     format: turbojpeg::PixelFormat::RGB};
-                // let jpeg_data = compress(image, 80, Subsamp::Sub2x2).unwrap();
-                // println!("Streaming");
-                // std::fs::write("outputmpp24.jpg", &jpeg_data).unwrap();
-                // println!("Saving frame");
-                if stream.is_some() {
-                    let mut frame = Vec::new();
-
-                    let len: [u8; 8] = jpeg_data.len().to_be_bytes();
-                    let mut open_stream = stream.take().unwrap();
-                    // frame.extend_from_slice(&len);
-                    // frame.extend_from_slice(&jpeg_data);
-                    // println!("{:?}", len);
-                    if let Err(e) = open_stream.write_all(&len) {
-                        stream = None; 
-                        eprintln!("v0.1.0 stream dropped {}", e);
-                        continue
-                    } 
-                    
-                    if let Err(e) = open_stream.write_all(&jpeg_data) {
-                        stream = None; 
-                        eprintln!("v0.1.0 stream dropped {}", e);
-                        continue
-                    } 
-
-                    if total_frames % 10 == 0 {
-                        //Width x Height x Pixel Format x Encoder x Server FPS x Total Frames
-                        let mut stream_metadata = format!("{width}x{height}x{pixelformat}x{encoder}x{fps}x{total_frames}").as_bytes().to_vec();
-                        stream_metadata.resize(1024, 0u8);
-                        // open_stream.write_all(&stream_metadata).unwrap();
-                        frame.extend_from_slice(&stream_metadata);
-                    } else {
-                        frame.extend_from_slice(&vec![0u8; 1024]);
-                    };
-
-                    if let Err(e) = open_stream.write_all(&frame) {
-                        stream = None; 
-                        eprintln!("v0.1.0 stream dropped {}", e);
-                        continue
-                    } 
-                    // println!("Data length: {}", jpeg_data.len());
-                    stream.replace(open_stream);
+           let mut lock = shared_image_clone.write().await;
+                let mut metadata = format!("{width}x{height}x{pixelformat}x{encoder}x{fps}x{total_frames}");
+                lock.frame = Some(jpeg_data);
+                lock.client_total_frames.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                // println!("Frames recieved: {}", lock.client_total_frames.load(std::sync::atomic::Ordering::Relaxed));
+                let parts: Vec<&str> = metadata.split('x').collect();
+                if parts.len() == 6 {
+                    lock.width = parts[0].parse::<u32>().unwrap_or(lock.width);
+                    lock.height = parts[1].parse::<u32>().unwrap_or(lock.height);
+                    lock.format = parts[2].to_owned();
+                    lock.encoder = parts[3].to_owned();
+                    lock.server_fps.swap(parts[4].parse::<usize>().unwrap_or(lock.server_fps.load(std::sync::atomic::Ordering::Relaxed)), std::sync::atomic::Ordering::Relaxed);
+                    lock.server_total_frames.swap(parts[5].parse::<usize>().unwrap_or(lock.server_total_frames.load(std::sync::atomic::Ordering::Relaxed)), std::sync::atomic::Ordering::Relaxed);
                 }
-                // } else {
+            
+                // if stream.is_some() {
+                //     let mut frame = Vec::new();
+
+                //     let len: [u8; 8] = jpeg_data.len().to_be_bytes();
                 //     let mut open_stream = stream.take().unwrap();
-                //     open_stream.write_all(format!("{}x{}x{}", width, height, width*height*3).as_bytes()).expect("Write Failed");
-                //     open_stream.flush();
-                //     metadata_sent = true;
+                //     // frame.extend_from_slice(&len);
+                //     // frame.extend_from_slice(&jpeg_data);
+                //     // println!("{:?}", len);
+                //     if let Err(e) = open_stream.write_all(&len) {
+                //         stream = None; 
+                //         eprintln!("v0.1.0 stream dropped {}", e);
+                //         continue
+                //     } 
+                    
+                //     if let Err(e) = open_stream.write_all(&jpeg_data) {
+                //         stream = None; 
+                //         eprintln!("v0.1.0 stream dropped {}", e);
+                //         continue
+                //     } 
+
+                //     if total_frames % 10 == 0 {
+                //         //Width x Height x Pixel Format x Encoder x Server FPS x Total Frames
+                //         let mut stream_metadata = format!("{width}x{height}x{pixelformat}x{encoder}x{fps}x{total_frames}").as_bytes().to_vec();
+                //         stream_metadata.resize(1024, 0u8);
+                //         // open_stream.write_all(&stream_metadata).unwrap();
+                //         frame.extend_from_slice(&stream_metadata);
+                //     } else {
+                //         frame.extend_from_slice(&vec![0u8; 1024]);
+                //     };
+
+                //     if let Err(e) = open_stream.write_all(&frame) {
+                //         stream = None; 
+                //         eprintln!("v0.1.0 stream dropped {}", e);
+                //         continue
+                //     } 
+                //     // println!("Data length: {}", jpeg_data.len());
                 //     stream.replace(open_stream);
                 // }
+                // // } else {
+                // //     let mut open_stream = stream.take().unwrap();
+                // //     open_stream.write_all(format!("{}x{}x{}", width, height, width*height*3).as_bytes()).expect("Write Failed");
+                // //     open_stream.flush();
+                // //     metadata_sent = true;
+                // //     stream.replace(open_stream);
+                // // }
                 
                 std::thread::sleep(Duration::from_millis(10));
 
@@ -402,11 +409,11 @@ fn encode_jpeg(data: PlaneMapping, width:usize, height: usize, pixelformat: &str
     jpeg_data.to_vec()
 }
 
-fn init_axum_server(port: u32) {
+fn init_axum_server(port: u32, shared: Arc<RwLock<ImageData>>) {
     std::thread::spawn(move || {
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async {
-            server::start_axum(port).await;
+            server::start_axum(port, shared).await;
         });
     });
 }

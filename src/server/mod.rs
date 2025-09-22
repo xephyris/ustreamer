@@ -26,9 +26,12 @@ pub mod img;
 // To send requests to socket
 // sudo socat - UNIX-CONNECT:/run/kvmd/ustreamer.sock
 
+// To bind unix socket to IP Address
+// socat TCP-LISTEN:8080,bind=0.0.0.0,reuseaddr,fork UNIX-CONNECT:/run/kvmd/ustreamer.sock
 
-pub async fn start_axum(port: u32) {
-    let shared = Arc::new(RwLock::new(ImageData::new())); 
+
+pub async fn start_axum(port: u32, shared: Arc<RwLock<ImageData>>) {
+    
     let shared_clone = Arc::clone(&shared);
     let client_list =Arc::new(RwLock::new(Clients::new()));
     let socket_path = "/run/kvmd/ustreamer.sock"; 
@@ -50,10 +53,10 @@ pub async fn start_axum(port: u32) {
         
         tokio::spawn(async move {
             loop {
-                println!("Trying connection");
+                // println!("Trying connection");
                 match sock_listener.accept().await {
                     Ok((stream, _addr)) => {
-                        println!("Connection recieved from {:?}", _addr);
+                        // println!("Connection recieved from {:?}", _addr);
                         let clone = shared_clone.clone();
                         let client_clone = client_list.clone();
                         tokio::spawn(async {
@@ -80,7 +83,7 @@ pub async fn start_axum(port: u32) {
         
 
         let listener = tokio::net::TcpListener::bind("0.0.0.0:8080").await.unwrap();
-        println!("{:?}", listener.local_addr());
+        // println!("{:?}", listener.local_addr());
         axum::serve(listener, app.clone().into_make_service()).await.unwrap();
     }
 }
@@ -112,7 +115,7 @@ async fn attach_socket(image_data: Arc<RwLock<ImageData>>) {
         if handle.is_some() {
             match handle.take().unwrap().await {
                 Ok(_) => {
-                    println!("Reconnecting ...")
+                    // println!("Reconnecting ...")
                 },
                 Err(e) => { 
                     eprintln!("Streamer failed {}", e);
@@ -169,49 +172,49 @@ async fn mjpeg_page(image: Extension<Arc<RwLock<ImageData>>>) -> Response {
 }
 
 async fn mjpeg_stream(socket: Arc<RwLock<TcpStream>>, image: Arc<RwLock<ImageData>>) {
-    let mut net_fetcher = ImgStream::new(socket.clone());
-    let mut stream= Box::pin(net_fetcher.get_stream());
-    let mut fps = 0;
-    let mut frames = Instant::now();
-    let mut missed = 0;
-    loop {
-        // let mut start = Instant::now();
-        if let Some(img_data) = stream.next().await{
-            let mut lock = image.write().await;
-            if frames.elapsed() >= Duration::from_secs(1) {
-                lock.client_fps.swap((lock.client_fps.load(std::sync::atomic::Ordering::Relaxed) + fps) / 2, std::sync::atomic::Ordering::Relaxed);
-                fps = 0;
-                frames = Instant::now();
-            }
+    // let mut net_fetcher = ImgStream::new(socket.clone());
+    // let mut stream= Box::pin(net_fetcher.get_stream());
+    // let mut fps = 0;
+    // let mut frames = Instant::now();
+    // let mut missed = 0;
+    // loop {
+    //     // let mut start = Instant::now();
+    //     // if let Some(img_data) = stream.next().await{
+            // let mut lock = image.write().await;
+            // if frames.elapsed() >= Duration::from_secs(1) {
+            //     lock.client_fps.swap((lock.client_fps.load(std::sync::atomic::Ordering::Relaxed) + fps) / 2, std::sync::atomic::Ordering::Relaxed);
+            //     fps = 0;
+            //     frames = Instant::now();
+            // }
             
-            fps += 1;
-            missed = 0;
-            if !img_data.0.is_empty() {
-                lock.frame = Some(img_data.0);
-            }
-            lock.client_total_frames.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            // println!("Frames recieved: {}", lock.client_total_frames.load(std::sync::atomic::Ordering::Relaxed));
-            if let Some(metadata) = img_data.1 {
-                let parts: Vec<&str> = metadata.split('x').collect();
-                if parts.len() == 6 {
-                    lock.width = parts[0].parse::<u32>().unwrap_or(lock.width);
-                    lock.height = parts[1].parse::<u32>().unwrap_or(lock.height);
-                    lock.format = parts[2].to_owned();
-                    lock.encoder = parts[3].to_owned();
-                    lock.server_fps.swap(parts[4].parse::<usize>().unwrap_or(lock.server_fps.load(std::sync::atomic::Ordering::Relaxed)), std::sync::atomic::Ordering::Relaxed);
-                    lock.server_total_frames.swap(parts[5].parse::<usize>().unwrap_or(lock.server_total_frames.load(std::sync::atomic::Ordering::Relaxed)), std::sync::atomic::Ordering::Relaxed);
-                }
-            }
-        } else {
-            missed += 1;
-            println!("nothing recieved");
-            if missed > 100 {
-                break;
-            }
-        }
-        // println!("frame time {}", start.elapsed().as_millis());
-        sleep(Duration::from_millis(0)).await;
-    }
+            // fps += 1;
+            // missed = 0;
+            // if !img_data.0.is_empty() {
+            //     lock.frame = Some(img_data.0);
+            // }
+            // lock.client_total_frames.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            // // // println!("Frames recieved: {}", lock.client_total_frames.load(std::sync::atomic::Ordering::Relaxed));
+            // if let Some(metadata) = img_data.1 {
+            //     let parts: Vec<&str> = metadata.split('x').collect();
+            //     if parts.len() == 6 {
+            //         lock.width = parts[0].parse::<u32>().unwrap_or(lock.width);
+            //         lock.height = parts[1].parse::<u32>().unwrap_or(lock.height);
+            //         lock.format = parts[2].to_owned();
+            //         lock.encoder = parts[3].to_owned();
+            //         lock.server_fps.swap(parts[4].parse::<usize>().unwrap_or(lock.server_fps.load(std::sync::atomic::Ordering::Relaxed)), std::sync::atomic::Ordering::Relaxed);
+            //         lock.server_total_frames.swap(parts[5].parse::<usize>().unwrap_or(lock.server_total_frames.load(std::sync::atomic::Ordering::Relaxed)), std::sync::atomic::Ordering::Relaxed);
+            //     }
+            // }
+    //     // } else {
+    //     //     missed += 1;
+    //     //     // println!("nothing recieved");
+    //     //     if missed > 100 {
+    //     //         break;
+    //     //     }
+    //     // }
+    //     // // println!("frame time {}", start.elapsed().as_millis());
+    //     sleep(Duration::from_millis(0)).await;
+    // }
 }
 
 
@@ -280,7 +283,7 @@ async fn connection_handler(stream: UnixStream, shared_clone: Arc<RwLock<ImageDa
     let mut buf_reader = BufReader::new(reader);
     let mut line = String::new();
     if buf_reader.read_line(&mut line).await.is_ok() {
-        println!("{}", line);
+        // println!("{}", line);
         if line.starts_with("GET /snapshot HTTP/1.1") {
             if let Some(img) = &shared_clone.read().await.frame {   
                 let now = Utc::now();
@@ -301,11 +304,11 @@ async fn connection_handler(stream: UnixStream, shared_clone: Arc<RwLock<ImageDa
                 }
 
                 let _ = writer.shutdown().await;
-                println!("Snapshot sent and connection closed");
+                // println!("Snapshot sent and connection closed");
             } else {
                 let _ = writer.write_all(b"HTTP/1.1 503 Service Unavailable\r\n\r\n").await;
                 let _ = writer.shutdown().await;
-                println!("No image available");
+                // println!("No image available");
             }
         } else if line.starts_with("GET /stream") {
             let client_clone = client_list.clone();
@@ -325,7 +328,7 @@ async fn connection_handler(stream: UnixStream, shared_clone: Arc<RwLock<ImageDa
             writer.write_all(headers.as_bytes()).await.unwrap();
             writer.flush().await.unwrap();
 
-            println!("Sent header {}", headers);
+            // println!("Sent header {}", headers);
 
             let mut prev_frame = None;
             let mut interval = tokio::time::interval(Duration::from_millis(33));
@@ -350,7 +353,7 @@ async fn connection_handler(stream: UnixStream, shared_clone: Arc<RwLock<ImageDa
                     let img = {
                         lock.frame.clone().unwrap()
                     };
-                    println!("img lock acquired parent {}/{}", _c_id.1, _c_id.0);
+                    // println!("img lock acquired parent {}/{}", _c_id.1, _c_id.0);
                     let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs_f64();
                     frame = Vec::new();
                     frame.extend_from_slice(format!(
@@ -363,7 +366,7 @@ async fn connection_handler(stream: UnixStream, shared_clone: Arc<RwLock<ImageDa
                         timestamp
                     ).as_bytes());
 
-                    println!("frame header: {}", String::from_utf8(frame.clone()).unwrap());
+                    // println!("frame header: {}", String::from_utf8(frame.clone()).unwrap());
                     // if let Some(img) = img {
                         frame.extend_from_slice(&img);
                     // }
@@ -375,8 +378,8 @@ async fn connection_handler(stream: UnixStream, shared_clone: Arc<RwLock<ImageDa
                     let lock = tokio::time::timeout(Duration::from_millis(100), stream_shared.read()).await;
                     if lock.is_ok() {
                         let img = lock.unwrap().frame.clone().unwrap();
-                        println!("img length:{}", img.len());
-                        println!("img lock acquired parent {}/{}", _c_id.1, _c_id.0);
+                        // println!("img length:{}", img.len());
+                        // println!("img lock acquired parent {}/{}", _c_id.1, _c_id.0);
                         let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs_f64();
                         frame = Vec::new();
                         frame.extend_from_slice(format!(
@@ -389,7 +392,7 @@ async fn connection_handler(stream: UnixStream, shared_clone: Arc<RwLock<ImageDa
                             timestamp
                         ).as_bytes());
 
-                        println!("frame header: {}", String::from_utf8(frame.clone()).unwrap());
+                        // println!("frame header: {}", String::from_utf8(frame.clone()).unwrap());
                         // if let Some(img) = img {
                             frame.extend_from_slice(&img);
                         // }
@@ -398,12 +401,12 @@ async fn connection_handler(stream: UnixStream, shared_clone: Arc<RwLock<ImageDa
                         prev_frame.replace(frame.clone());
                     } else {
                         frame = prev_frame.as_ref().unwrap().clone();
-                        println!("using previous image because lock was not acquired");
+                        // println!("using previous image because lock was not acquired");
                     }
                 }
 
-                println!("frame data ready and sending");
-                println!("FRAMES RECIEVED AND PROCESSED COUNT:     {}", count);
+                // println!("frame data ready and sending");
+                // println!("FRAMES RECIEVED AND PROCESSED COUNT:     {}", count);
 
                 if let Err(e) = writer.write_all(&frame).await {
                     eprintln!("Failed conneciton, {}", e);
@@ -428,9 +431,9 @@ async fn connection_handler(stream: UnixStream, shared_clone: Arc<RwLock<ImageDa
             client_clone.write().await.remove_client_from_header(line.clone());
 
         } else if line.starts_with("GET /state") {
-            println!("Recieved Request. Aquiring img lock");
+            // println!("Recieved Request. Aquiring img lock");
             let lock = shared_clone.read().await;
-            println!("lock aquired");
+            // println!("lock aquired");
             let cframe_num = lock.client_total_frames.load(std::sync::atomic::Ordering::Relaxed);
             let cfps = lock.client_fps.load(std::sync::atomic::Ordering::Relaxed);
             let width = lock.width;
@@ -449,7 +452,7 @@ async fn connection_handler(stream: UnixStream, shared_clone: Arc<RwLock<ImageDa
             sleep(Duration::from_millis(100)).await;
             
             let json =  client_list.read().await.to_json();
-            println!("client list {}", json.to_string());
+            // println!("client list {}", json.to_string());
 
             let json_body = json!({ 
                 "ok": true, 
@@ -493,14 +496,14 @@ async fn connection_handler(stream: UnixStream, shared_clone: Arc<RwLock<ImageDa
             response.extend_from_slice(json_body.len().to_string().as_bytes());
             response.extend_from_slice(b"\r\n\r\n");
             response.extend_from_slice(json_body.as_bytes());
-            println!("Sending response:\n{}", String::from_utf8_lossy(&response));
+            // println!("Sending response:\n{}", String::from_utf8_lossy(&response));
         
             if let Err(e) = writer.write_all(&response).await {
                 eprintln!("Failed to send JSON response: {}", e);
             }
             writer.flush().await;
             writer.shutdown().await;
-            println!("Status JSON sent and connection closed");
+            // println!("Status JSON sent and connection closed");
         } else if line.starts_with("GET /ustate") {
             let lock = shared_clone.read().await;
             let cframe_num = lock.client_total_frames.load(std::sync::atomic::Ordering::Relaxed);
@@ -548,16 +551,16 @@ async fn connection_handler(stream: UnixStream, shared_clone: Arc<RwLock<ImageDa
             response.extend_from_slice(json_body.len().to_string().as_bytes());
             response.extend_from_slice(b"\r\n\r\n");
             response.extend_from_slice(json_body.as_bytes());
-            println!("Sending response:\n{}", String::from_utf8_lossy(&response));
+            // println!("Sending response:\n{}", String::from_utf8_lossy(&response));
         
             if let Err(e) = writer.write_all(&response).await {
                 eprintln!("Failed to send JSON response: {}", e);
             }
             writer.flush().await;
             writer.shutdown().await;
-            println!("Ustreamer Status JSON sent and connection closed");
+            // println!("Ustreamer Status JSON sent and connection closed");
         } else {
-            println!("Tried accessing {}", line);
+            // println!("Tried accessing {}", line);
             let _ = writer.write_all(b"HTTP/1.1 404 Not Found\r\n\r\n").await;
         }
     }

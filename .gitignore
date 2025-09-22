@@ -10,3 +10,4 @@
 *.dump
 *.mjpeg
 *.mp4
+/legacy
