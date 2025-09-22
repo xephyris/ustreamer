@@ -38,7 +38,6 @@ pub async fn start_axum(port: u32) {
     let unix = true;
     eprintln!("Binding to new socket");
 
-
     tokio::spawn(async move {
         attach_socket(shared).await;
     });
@@ -88,19 +87,25 @@ pub async fn start_axum(port: u32) {
 
 async fn attach_socket(image_data: Arc<RwLock<ImageData>>) {
     let shared_data = Arc::clone(&image_data);
+    let mut attach_attempts = 0;
     loop {
         let mut handle = None;
         match TcpStream::connect("127.0.1.1:7878").await {
             Ok(found) => {
                 let socket = Arc::new(RwLock::new(found));
                 let clone = Arc::clone(&shared_data);
+                attach_attempts = 0;
                 handle.replace(tokio::spawn(async move {
                     mjpeg_stream(socket, clone).await;
                 }));
             }, 
             Err(_) => {
                 eprintln!("Failed to connect to socket. Is the image server running?");
+                attach_attempts += 1;
                 sleep(Duration::from_millis(200)).await;
+                if attach_attempts >= 20 {
+                    std::process::exit(1);
+                }
             }
         }
         
