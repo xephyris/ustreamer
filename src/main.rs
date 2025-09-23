@@ -209,7 +209,7 @@ async fn main() {
                 
            let mut lock = shared_image_clone.write().await;
                 let mut metadata = format!("{width}x{height}x{pixelformat}x{encoder}x{fps}x{total_frames}");
-                lock.frame = Some(jpeg_data);
+                lock.frame = Some(jpeg_data.clone());
                 lock.client_total_frames.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 // println!("Frames recieved: {}", lock.client_total_frames.load(std::sync::atomic::Ordering::Relaxed));
                 let parts: Vec<&str> = metadata.split('x').collect();
@@ -221,6 +221,8 @@ async fn main() {
                     lock.server_fps.swap(parts[4].parse::<usize>().unwrap_or(lock.server_fps.load(std::sync::atomic::Ordering::Relaxed)), std::sync::atomic::Ordering::Relaxed);
                     lock.server_total_frames.swap(parts[5].parse::<usize>().unwrap_or(lock.server_total_frames.load(std::sync::atomic::Ordering::Relaxed)), std::sync::atomic::Ordering::Relaxed);
                 }
+
+                // std::fs::File::write_all(&mut File::create("jpeg_size_test.jpg").unwrap(), &jpeg_data);
             
                 // if stream.is_some() {
                 //     let mut frame = Vec::new();
@@ -287,6 +289,7 @@ fn encode_jpeg(data: PlaneMapping, width:usize, height: usize, pixelformat: &str
     let processing = Instant::now();
     // let mut rgb_buf = vec![0u8; width as usize * height as usize * 3];
     if pixelformat == "NV12" {
+        // std::fs::File::write_all(&mut File::create("jpeg_buf_size_test.nv12").unwrap(), &data.data.to_vec());
         jpeg_data = rk_mpp::encode_jpeg(data.data.to_vec(), width as u32, height as u32, 80, StreamPixelFormat::NV12).unwrap();
         
         // rgb_buf.resize(width as usize * height as usize * 3, 0);

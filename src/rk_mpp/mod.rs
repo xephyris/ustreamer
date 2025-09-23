@@ -33,7 +33,10 @@ pub fn encode_jpeg(raw_buf: Vec<u8>, width: u32, height: u32, quality: u32, form
         mpp_enc_cfg_set_s32(cfg, b"prep:ver_stride\0" as *const _ , height);
         mpp_enc_cfg_set_s32(cfg, b"prep:format\0" as *const _ , MppFrameFormat_MPP_FMT_YUV420SP as i32);
         mpp_enc_cfg_set_s32(cfg, b"rc:mode\0" as *const _ , MppEncRcMode_e_MPP_ENC_RC_MODE_FIXQP as i32);
-        // mpp_enc_cfg_set_s32(cfg, b"jpeg:qfactor\0" as *const _ , quality);
+        mpp_enc_cfg_set_s32(cfg, b"jpeg:q_factor\0" as *const _,30); 
+        mpp_enc_cfg_set_s32(cfg, b"jpeg:qf_max\0" as *const _ , 40);
+        mpp_enc_cfg_set_s32(cfg, b"jpeg:qf_min\0" as *const _, 1);
+
 
         if mpi.is_null() {
             panic!("Null MPI");
