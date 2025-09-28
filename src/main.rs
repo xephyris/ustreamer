@@ -113,7 +113,9 @@ async fn main() {
     let mut fps = 0;
     let mut total_frames = 0;
     let mut reset = false;
+    let mut avg_frame_time = 0;
     loop {
+        let frame_time = Instant::now();
         if reset {
             ioctl::streamoff(&file, QueueType::VideoCaptureMplane).unwrap();
             format = ioctl::g_fmt(&file, QueueType::VideoCaptureMplane).unwrap();
@@ -160,6 +162,7 @@ async fn main() {
             if start.elapsed().as_secs() > 1 {
                 println!("FPS: {} REPEATED FRAMES: {}", frames, rframes);
                 println!("Total Frames: {}", total_frames);
+                println!("Image SERVER Frame TIME {}", avg_frame_time);
                 if fps != 0 {
                     fps = (fps + frames) / 2;
                 } else {
@@ -222,6 +225,12 @@ async fn main() {
                     lock.server_total_frames.swap(parts[5].parse::<usize>().unwrap_or(lock.server_total_frames.load(std::sync::atomic::Ordering::Relaxed)), std::sync::atomic::Ordering::Relaxed);
                 }
 
+                if avg_frame_time != 0 {
+                    avg_frame_time = (avg_frame_time + frame_time.elapsed().as_millis())/2;
+                } else {
+                    avg_frame_time = frame_time.elapsed().as_millis();
+                } 
+                // println!("Image SERVER INTERVAL {}", frame_time.elapsed().as_millis());
                 // std::fs::File::write_all(&mut File::create("jpeg_size_test.jpg").unwrap(), &jpeg_data);
             
                 // if stream.is_some() {

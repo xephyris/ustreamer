@@ -331,17 +331,21 @@ async fn connection_handler(stream: UnixStream, shared_clone: Arc<RwLock<ImageDa
             // println!("Sent header {}", headers);
 
             let mut prev_frame = None;
-            let mut interval = tokio::time::interval(Duration::from_millis(33));
+            // let mut interval = tokio::time::interval(Duration::from_millis(33));
             let mut first = true;
             let mut count = 0;
 
             let mut fps = 0;
             let mut start = Instant::now();
+            let mut avg_frame_time = 0;
+            
             loop {
-                interval.tick().await;
+                let frame_time = Instant::now();
+                // interval.tick().await;
                 count += 1;
 
                 if start.elapsed() > Duration::from_secs(1) {
+                    println!("WEB SERVER FRAME TIME {}", avg_frame_time);
                     start = Instant::now();
                     client_clone.write().await.update_fps_from_header(line.clone(), fps);
                     fps = 0;
@@ -375,7 +379,7 @@ async fn connection_handler(stream: UnixStream, shared_clone: Arc<RwLock<ImageDa
 
                     prev_frame.replace(frame.clone());
                 } else {
-                    let lock = tokio::time::timeout(Duration::from_millis(100), stream_shared.read()).await;
+                    let lock = tokio::time::timeout(Duration::from_millis(50), stream_shared.read()).await;
                     if lock.is_ok() {
                         let img = lock.unwrap().frame.clone().unwrap();
                         // println!("img length:{}", img.len());
@@ -398,7 +402,7 @@ async fn connection_handler(stream: UnixStream, shared_clone: Arc<RwLock<ImageDa
                         // }
 
                         frame.extend_from_slice(b"\r\n");
-                        prev_frame.replace(frame.clone());
+                        // prev_frame.replace(frame.clone());
                     } else {
                         frame = prev_frame.as_ref().unwrap().clone();
                         // println!("using previous image because lock was not acquired");
@@ -427,6 +431,11 @@ async fn connection_handler(stream: UnixStream, shared_clone: Arc<RwLock<ImageDa
                         break;
                     }
                 }
+                if avg_frame_time != 0 {
+                    avg_frame_time = (avg_frame_time + frame_time.elapsed().as_millis())/2;
+                } else {
+                    avg_frame_time = frame_time.elapsed().as_millis();
+                } 
             }
             client_clone.write().await.remove_client_from_header(line.clone());
 
