@@ -402,7 +402,7 @@ async fn connection_handler(stream: UnixStream, shared_clone: Arc<RwLock<ImageDa
                         // }
 
                         frame.extend_from_slice(b"\r\n");
-                        // prev_frame.replace(frame.clone());
+                        prev_frame.replace(frame.clone());
                     } else {
                         frame = prev_frame.as_ref().unwrap().clone();
                         // println!("using previous image because lock was not acquired");
@@ -411,7 +411,6 @@ async fn connection_handler(stream: UnixStream, shared_clone: Arc<RwLock<ImageDa
 
                 // println!("frame data ready and sending");
                 // println!("FRAMES RECIEVED AND PROCESSED COUNT:     {}", count);
-
                 if let Err(e) = writer.write_all(&frame).await {
                     eprintln!("Failed conneciton, {}", e);
                     break;

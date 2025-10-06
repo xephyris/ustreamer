@@ -279,8 +279,11 @@ async fn main() {
                 // //     stream.replace(open_stream);
                 // // }
                 
-                std::thread::sleep(Duration::from_millis(10));
-
+                if height > 1920 {
+                    std::thread::sleep(Duration::from_millis(10));
+                } else {
+                    std::thread::sleep(Duration::from_millis(100));
+                }
 
             total_frames += 1;
             // println!("Data length: {}", jpeg_data.len());
