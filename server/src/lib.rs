@@ -36,9 +36,9 @@ impl ImgStream {
                 let mut open_socket = BufReader::new(&mut *socket_guard);
                 let mut len_buf = [0u8; 8];
                 open_socket.read_exact(&mut len_buf).await.unwrap_or_else(|_| {return 0;});
-                println!("{:?}", len_buf)       ;
+                // println!("{:?}", len_buf)       ;
                 let len = usize::from_be_bytes(len_buf);
-                println!("len recieved {}", len);
+                // println!("len recieved {}", len);
                 if len < 10000*10000*3 {
                     let mut buffer = vec![0u8; len];
                     match open_socket.read_exact(&mut buffer).await {
@@ -81,6 +81,7 @@ struct StreamState {
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 pub struct ImageData{
+    pub skip: bool,
     pub frame: Option<Vec<u8>>,
     pub width: u32,
     pub height: u32,
@@ -95,6 +96,7 @@ pub struct ImageData{
 impl ImageData {
     pub fn new() -> Self {
         ImageData {
+            skip: false,
             frame: None, 
             width: 1920, 
             height: 1080, 

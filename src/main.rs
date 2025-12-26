@@ -11,11 +11,14 @@ use ustreamer::server;
 use ustreamer::server::img::ImageData;
 use ustreamer::StreamPixelFormat;
 use v4l2r::ioctl::PlaneMapping;
+use v4l2r::ioctl::streamon;
+use v4l2r::ioctl::dqbuf;
 use v4l2r::{device::{DeviceConfig, Device, queue::Queue}, ioctl::{self, mmap, qbuf, reqbufs, GFmtError, MemoryConsistency, RequestBuffers, V4l2Buffer}, memory::MemoryType, Format, PixelFormat, QueueType,};
 use std::io::Write;
 use std::os::fd::{AsFd, AsRawFd};
 use std::path::Path;
 use std::sync::{Arc};
+use std::thread::JoinHandle;
 use std::time::Duration;
 use std::time::Instant;
 use std::fs::File;
@@ -25,7 +28,7 @@ use tokio::sync::RwLock;
 #[cfg(mpp_accel)]
 use ustreamer::rk_mpp;
 
-// TODO Integrate server and client
+// COMPLETE Integrate server and client
 // TODO Improve Frame retention between image server and web server 
 // * (reduce lost frames from when sync between image server + web server is disrupted)
 // ? (Send Arc<RwLock<Vec<u8>>> to axum server on initialization)
@@ -38,38 +41,27 @@ use ustreamer::rk_mpp;
 // FFMPEG Recording :  ffmpeg -f v4l2 -pixel_format nv12 -video_size 1920x1080 -i /dev/video0        -c:v mjpeg -pix_fmt yuvj422p -f avi output1.avi
 #[tokio::main]
 async fn main() {
-    let embedded = true;
+    let embedded = false;
+
+    let downscaling = false;
+    let skip_repeats = true;
+
     let shared = Arc::new(RwLock::new(ImageData::new())); 
     let shared_image_clone = shared.clone();
     let shared_clone = shared.clone();
-    let lock = StreamLock::aquire_lock("/run/kvmd/ustreamer.lock".to_string());
+    
+    
+    let _lock = StreamLock::aquire_lock("/run/kvmd/ustreamer.lock".to_string());
     let (listener   , port) = bind_socket();
 
-    let mut started = false;
-    let shared = Arc::new(RwLock::new(ImageData::new()));
+    let mut server_started = false;
     // Start client
     if embedded {
         init_axum_server(port, shared_clone.clone());
-        started = true;
+        server_started = true;
     }
 
-    let dev = Arc::new(Device::open(&Path::new("/dev/video0"), DeviceConfig::new()).unwrap());
-    // dbg!(dev.caps());
-
-    let downscaling = false;
-    let skip_repeats = false;
-    
-    let mut width: usize = 3840;
-    let mut height: usize = 2160;
-    let downscale_w: usize;
-    let downscale_h: usize;
-    if downscaling {
-        downscale_w = 1920;
-        downscale_h = 1080;
-    } else {
-        downscale_w = width;
-        downscale_h = height;
-    }
+    let dev = Device::open(&Path::new("/dev/video0"), DeviceConfig::new()).map_err(|e| panic!("Failed to open device with error: {e}")).unwrap();
 
     let file = dev.as_raw_fd();
     let filefd = dev.as_fd();
@@ -95,8 +87,8 @@ async fn main() {
         }
     };
     println!("Format: {:?}", format);
-    width = format.width as usize;
-    height = format.height as usize;
+    let mut width = format.width as usize;
+    let mut height = format.height as usize;
 
     // let new_format = Format{    
     //     width: width as u32,
@@ -112,7 +104,7 @@ async fn main() {
     let mut pixelformat = ioctl::g_fmt::<Format>(&file, q_type).unwrap().pixelformat.to_string();
     
 
-    let mut req: RequestBuffers = reqbufs(&file, q_type, MemoryType::Mmap, 4, MemoryConsistency::empty()).unwrap();
+    let mut req: RequestBuffers = reqbufs(&file, q_type, MemoryType::Mmap, 4, MemoryConsistency::empty()).map_err(|e| panic!("Failed to request buffers: {e}")).unwrap();
     println!("Requested {} buffers", req.count);
 
     let mut frames = 0;
@@ -120,7 +112,7 @@ async fn main() {
     let mut start = Instant::now();
 
     let mut last_buf = vec![0u8; width as usize * height as usize * 3];
-        last_buf.resize(width as usize * height as usize * 3, 0);
+    last_buf.resize(width as usize * height as usize * 3, 0);
 
     let timeout = Duration::from_secs(1);
     let mut last_check = Instant::now();
@@ -131,13 +123,16 @@ async fn main() {
 
     let mut fps = 0;
     let mut total_frames = 0;
-    let mut reset = false;
     let mut avg_frame_time = 0;
+
+    let mut reset = false;
+    
     loop {
+
         let frame_time = Instant::now();
         if reset {
-            ioctl::streamoff(&file, QueueType::VideoCaptureMplane).unwrap();
-            format = ioctl::g_fmt(&file, QueueType::VideoCaptureMplane).unwrap();
+            ioctl::streamoff(&file, QueueType::VideoCaptureMplane).map_err(|e| eprintln!("Failed to stop stream: {e}")).ok();
+            format = ioctl::g_fmt(&file, QueueType::VideoCaptureMplane).map_err(|e| eprintln!("Failed to get stream format: {e}")).unwrap();
             width = format.width as usize;
             height = format.height as usize;
             pixelformat = format.pixelformat.to_string();
@@ -149,6 +144,7 @@ async fn main() {
                     req
                 },
                 Err(err) => {
+                    eprintln!("Failed to reset stream: {}", err);
                     continue
                 }
             };
@@ -156,7 +152,7 @@ async fn main() {
         }
 
         else if stream.as_ref().is_none() {
-            if embedded && !started {
+            if embedded && !server_started {
                 init_axum_server(port, shared_clone.clone());
             }
             match listener.accept() {
@@ -164,13 +160,12 @@ async fn main() {
                     stream.replace(stm);
                     println!("Client connected: {}", addr);
                 },
-                Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                    // No connection yet
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
                     if last_check.elapsed() >= timeout {
-                        println!("No connections in last 5 seconds");
+                        println!("No connections in last second");
                         last_check = Instant::now();
                     }
-                    std::thread::sleep(Duration::from_millis(100)); // avoid busy loop
+                    std::thread::sleep(Duration::from_millis(100)); 
                 },
                 Err(e) => {
                     eprintln!("Connection failed: {}", e);
@@ -192,196 +187,162 @@ async fn main() {
                 start = Instant::now();
             }
             
-            unsafe {
-                for i in 0..req.count {
-                    let buf = V4l2Buffer::new(q_type, i, MemoryType::Mmap);
-                    qbuf::<V4l2Buffer, V4l2Buffer>(&file, buf);
-                }
-                
+            
+            for i in 0..req.count {
+                let buf = V4l2Buffer::new(q_type, i, MemoryType::Mmap);
+                // unsafe {qbuf::<V4l2Buffer, V4l2Buffer>(&file, buf).map_err(|e| eprintln!("Failed to access buffers: {e}"))};
+                unsafe { qbuf::<V4l2Buffer, V4l2Buffer>(&file, buf); }
             }
 
-            use v4l2r::ioctl::streamon;
+            
+
             streamon(&file, q_type).unwrap();
 
-            use v4l2r::ioctl::dqbuf;
             let buf: V4l2Buffer = match dqbuf(&file, q_type) {
                 Ok(buf) => {
                     buf
                 },
-                Err(err) => {
-                    // eprintln!("{}", err);
+                Err(e) => {
+                    eprintln!("{}", e);
                     reset = true;
                     continue
                 }
             };
 
-            println!("Number of PLANES {}", buf.num_planes());
+            
             let plane = buf.get_first_plane();
-            println!("plane len: {}", plane.length);
+
+            // println!("Number of PLANES {}", buf.num_planes());
+            // println!("plane len: {}", plane.length);
+            let mut server_skip = 0;
             let data = mmap(&filefd, if let Some(offset) = plane.data_offset {*offset} else {0}, *plane.length).unwrap();
-            if data.data == last_buf && skip_repeats {
-                frames += 1;
-                // println!("REPEATED FRAMES FOUND!!!");
-                rframes += 1;
-                continue
+            if skip_repeats && embedded{
+                if data.data == last_buf.as_slice() {
+                    frames += 1;
+                    // println!("REPEATED FRAMES FOUND!!!");
+                    rframes += 1;
+                    let mut lock = shared_image_clone.write().await;
+                    lock.skip = true;
+                    continue
+                } else {
+                    last_buf = data.data.to_vec();
+                }
             } else {
-                last_buf = data.data.to_vec();
+                if data.data == last_buf.as_slice() {
+                    frames += 1;
+                    println!("REPEATED FRAMES FOUND!!!");
+                    rframes += 1;
+                    server_skip = 1; // For External Server Use;
+                } else {
+                    last_buf = data.data.to_vec();
+                    server_skip = 0;
+                }
             }
             
-            let jpeg_data = encode_jpeg(data, width, height, &pixelformat);
-            std::fs::write("jpeg_test.jpg", &jpeg_data);
-           let mut lock = shared_image_clone.write().await;
-                let mut metadata = format!("{width}x{height}x{pixelformat}x{encoder}x{fps}x{total_frames}");
-                lock.frame = Some(jpeg_data.clone());
-                lock.client_total_frames.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                // println!("Frames recieved: {}", lock.client_total_frames.load(std::sync::atomic::Ordering::Relaxed));
-                let parts: Vec<&str> = metadata.split('x').collect();
-                if parts.len() == 6 {
-                    lock.width = parts[0].parse::<u32>().unwrap_or(lock.width);
-                    lock.height = parts[1].parse::<u32>().unwrap_or(lock.height);
-                    lock.format = parts[2].to_owned();
-                    lock.encoder = parts[3].to_owned();
-                    lock.server_fps.swap(parts[4].parse::<usize>().unwrap_or(lock.server_fps.load(std::sync::atomic::Ordering::Relaxed)), std::sync::atomic::Ordering::Relaxed);
-                    lock.server_total_frames.swap(parts[5].parse::<usize>().unwrap_or(lock.server_total_frames.load(std::sync::atomic::Ordering::Relaxed)), std::sync::atomic::Ordering::Relaxed);
-                }
+            let jpeg_data = encode_jpeg(data, width, height, &pixelformat, 40);
+            let mut lock = shared_image_clone.write().await;
+            let metadata = format!("{width}x{height}x{pixelformat}x{encoder}x{fps}x{total_frames}");
+            lock.frame = Some(jpeg_data.clone());
+            lock.client_total_frames.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            lock.skip = false;
+            let parts: Vec<&str> = metadata.split('x').collect();
+            // if parts.len() == 6 {
+            //     lock.width = parts[0].parse::<u32>().unwrap_or(lock.width);
+            //     lock.height = parts[1].parse::<u32>().unwrap_or(lock.height);
+            //     lock.format = parts[2].to_owned();
+            //     lock.encoder = parts[3].to_owned();
+            //     lock.server_fps.swap(parts[4].parse::<usize>().unwrap_or(lock.server_fps.load(std::sync::atomic::Ordering::Relaxed)), std::sync::atomic::Ordering::Relaxed);
+            //     lock.server_total_frames.swap(parts[5].parse::<usize>().unwrap_or(lock.server_total_frames.load(std::sync::atomic::Ordering::Relaxed)), std::sync::atomic::Ordering::Relaxed);
+            // }
 
-                if avg_frame_time != 0 {
-                    avg_frame_time = (avg_frame_time + frame_time.elapsed().as_millis())/2;
-                } else {
-                    avg_frame_time = frame_time.elapsed().as_millis();
+             if stream.is_some() {
+                let mut frame = Vec::new();
+
+                let len: [u8; 8] = jpeg_data.len().to_be_bytes();
+                let mut open_stream = stream.take().unwrap();
+                // frame.extend_from_slice(&len);
+                // frame.extend_from_slice(&jpeg_data);
+                // println!("{:?}", len);
+                if let Err(e) = open_stream.write_all(&len) {
+                    stream = None; 
+                    eprintln!("v0.1.0 stream dropped {}", e);
+                    continue
                 } 
-                // println!("Image SERVER INTERVAL {}", frame_time.elapsed().as_millis());
-                // std::fs::File::write_all(&mut File::create("jpeg_size_test.jpg").unwrap(), &jpeg_data);
-            
-                // if stream.is_some() {
-                //     let mut frame = Vec::new();
-
-                //     let len: [u8; 8] = jpeg_data.len().to_be_bytes();
-                //     let mut open_stream = stream.take().unwrap();
-                //     // frame.extend_from_slice(&len);
-                //     // frame.extend_from_slice(&jpeg_data);
-                //     // println!("{:?}", len);
-                //     if let Err(e) = open_stream.write_all(&len) {
-                //         stream = None; 
-                //         eprintln!("v0.1.0 stream dropped {}", e);
-                //         continue
-                //     } 
-                    
-                //     if let Err(e) = open_stream.write_all(&jpeg_data) {
-                //         stream = None; 
-                //         eprintln!("v0.1.0 stream dropped {}", e);
-                //         continue
-                //     } 
-
-                //     if total_frames % 10 == 0 {
-                //         //Width x Height x Pixel Format x Encoder x Server FPS x Total Frames
-                //         let mut stream_metadata = format!("{width}x{height}x{pixelformat}x{encoder}x{fps}x{total_frames}").as_bytes().to_vec();
-                //         stream_metadata.resize(1024, 0u8);
-                //         // open_stream.write_all(&stream_metadata).unwrap();
-                //         frame.extend_from_slice(&stream_metadata);
-                //     } else {
-                //         frame.extend_from_slice(&vec![0u8; 1024]);
-                //     };
-
-                //     if let Err(e) = open_stream.write_all(&frame) {
-                //         stream = None; 
-                //         eprintln!("v0.1.0 stream dropped {}", e);
-                //         continue
-                //     } 
-                //     // println!("Data length: {}", jpeg_data.len());
-                //     stream.replace(open_stream);
-                // }
-                // // } else {
-                // //     let mut open_stream = stream.take().unwrap();
-                // //     open_stream.write_all(format!("{}x{}x{}", width, height, width*height*3).as_bytes()).expect("Write Failed");
-                // //     open_stream.flush();
-                // //     metadata_sent = true;
-                // //     stream.replace(open_stream);
-                // // }
                 
-                if height > 1920 {
-                    std::thread::sleep(Duration::from_millis(10));
+                if let Err(e) = open_stream.write_all(&jpeg_data) {
+                    stream = None; 
+                    eprintln!("v0.1.0 stream dropped {}", e);
+                    continue
+                } 
+
+                if total_frames % 10 == 0 {
+                    //Width x Height x Pixel Format x Encoder x Server FPS x Total Frames
+                    let mut stream_metadata = format!("{width}x{height}x{pixelformat}x{encoder}x{fps}x{total_frames}x{server_skip}").as_bytes().to_vec();
+                    stream_metadata.resize(1024, 0u8);
+                    // open_stream.write_all(&stream_metadata).unwrap();
+                    frame.extend_from_slice(&stream_metadata);
                 } else {
-                    std::thread::sleep(Duration::from_millis(100));
-                }
+                    frame.extend_from_slice(&vec![0u8; 1024]);
+                };
+
+                if let Err(e) = open_stream.write_all(&frame) {
+                    stream = None; 
+                    eprintln!("v0.1.0 stream dropped {}", e);
+                    continue
+                } 
+                // println!("Data length: {}", jpeg_data.len());
+                stream.replace(open_stream);
+            } else {
+                let mut open_stream = stream.take().unwrap();
+                open_stream.write_all(format!("{}x{}x{}", width, height, width*height*3).as_bytes()).expect("Write Failed");
+                open_stream.flush();
+                // metadata_sent = true;
+                stream.replace(open_stream);
+            }
+
+            if avg_frame_time != 0 {
+                avg_frame_time = (avg_frame_time + frame_time.elapsed().as_millis())/2;
+            } else {
+                avg_frame_time = frame_time.elapsed().as_millis();
+            } 
+
+            if height > 1920 {
+                std::thread::sleep(Duration::from_millis(10));
+            } else {
+                std::thread::sleep(Duration::from_millis(30));
+            }
 
             total_frames += 1;
             // println!("Data length: {}", jpeg_data.len());
-
-            
             frames += 1;
         }
     }
 }
 
 #[cfg(mpp_accel)]
-fn encode_jpeg(data: PlaneMapping, width:usize, height: usize, pixelformat: &str) -> Vec<u8> {
+fn encode_jpeg(data: PlaneMapping, width:usize, height: usize, pixelformat: &str, quality: u8) -> Vec<u8> {
     let mut jpeg_data = Vec::new();
 
-    let processing = Instant::now();
+    // let processing = Instant::now();
     // let mut rgb_buf = vec![0u8; width as usize * height as usize * 3];
     if pixelformat == "NV12" {
-        // std::fs::File::write_all(&mut File::create("jpeg_buf_size_test.nv12").unwrap(), &data.data.to_vec());
-        jpeg_data = rk_mpp::encode_jpeg(data.data.to_vec(), width as u32, height as u32, 80, StreamPixelFormat::NV12).unwrap();
-        
-        // rgb_buf.resize(width as usize * height as usize * 3, 0);
-        // ustreamer::converters::nv12_to_rgb_yuv(&data, width, height, &mut rgb_buf);
-    
-    
-        // println!("Conversion processing time: {}", processing.elapsed().as_millis());    
-        // let file = File::create(format!("output_{}.jpg", 0)).unwrap();
+        jpeg_data = rk_mpp::encode_jpeg(data.data.to_vec(), width as u32, height as u32, quality, StreamPixelFormat::NV12).unwrap();
     }
     
     if pixelformat == "BGR3" {
-
-        jpeg_data = rk_mpp::encode_jpeg(data.data.to_vec(), width as u32, height as u32, 80, StreamPixelFormat::BGR3).unwrap();
-
-        // let width = 1920;
-        // let height = 1080;
-        // let num_bytes = width * height * 3;
-
-        // // Load raw BGR data
-        // let mut bgr_data = data.data.to_vec();
-        // let mut rgb_data = Vec::with_capacity(bgr_data.len());
-
-        // for chunk in bgr_data.chunks(3) {
-        //     let b = chunk[0];
-        //     let g = chunk[1];
-        //     let r = chunk[2];
-        //     rgb_data.extend_from_slice(&[r, g, b]);
-        // }
-        // // Initialize TurboJPEG compressor
-
-        // let image = Image{ 
-        // pixels: rgb_data.as_slice(), 
-        // width: 1920, 
-        // pitch: 1920 * 3, 
-        // height: 1080, 
-        // format: turbojpeg::PixelFormat::RGB};
-        // Compress to JPEG with ~80% quality
-        // let jpeg_data = compress(image, 80, Subsamp::Sub2x2).unwrap();
-
-        // Write JPEG to file
-        // std::fs::write("outputbgr.jpg", &jpeg_data).unwrap();
-        
-        // rgb_buf.resize(width as usize * height as usize * 3, 0);
-        // ustreamer::converters::nv12_to_rgb_yuv(&data, width, height, &mut rgb_buf);
-    
-    
-        // println!("Conversion processing time: {}", processing.elapsed().as_millis());    
-        // let file = File::create(format!("output_{}.jpg", 0)).unwrap();
+        jpeg_data = rk_mpp::encode_jpeg(data.data.to_vec(), width as u32, height as u32, quality, StreamPixelFormat::BGR3).unwrap();
     }
 
     if pixelformat == "NV24" {
         // std::fs::write("nv24.raw", data.data.to_vec()).unwrap();
-        jpeg_data = rk_mpp::encode_jpeg(data.data.to_vec(), width as u32, height as u32, 80, StreamPixelFormat::NV24).unwrap();
+        jpeg_data = rk_mpp::encode_jpeg(data.data.to_vec(), width as u32, height as u32, quality, StreamPixelFormat::NV24).unwrap();
     }
     // println!("Frame processing time: {}", processing.elapsed().as_millis());
     jpeg_data
 }
 
 #[cfg(not(mpp_accel))]
-fn encode_jpeg(data: PlaneMapping, width:usize, height: usize, pixelformat: &str) -> Vec<u8> {
+fn encode_jpeg(data: PlaneMapping, width:usize, height: usize, pixelformat: &str, quality: u8) -> Vec<u8> {
     use turbojpeg::OwnedBuf;
 
     println!("Using CPU for encoding");

@@ -122,31 +122,34 @@ async fn mjpeg_page(image: Extension<Arc<RwLock<ImageData>>>) -> Response {
         // let value = sock_stream.clone();
         async move {
             // sleep(Duration::from_millis(20)).await;
+            if !image.read().await.skip {
+                let mut frame = Vec::new();
+                if let Some(img) = &image.read().await.frame {
+                    let img = img.clone();
+                    frame.extend_from_slice(b"--frame\r\n");
+                    frame.extend_from_slice(b"Content-Type: image/jpeg\r\n\r\n");
+                    frame.extend_from_slice(&img);
+                    frame.extend_from_slice(b"\r\n");
 
-            let mut frame = Vec::new();
-            if let Some(img) = &image.read().await.frame {
-                let img = img.clone();
-                frame.extend_from_slice(b"--frame\r\n");
-                frame.extend_from_slice(b"Content-Type: image/jpeg\r\n\r\n");
-                frame.extend_from_slice(&img);
-                frame.extend_from_slice(b"\r\n");
+                    // if let Some(mut sock) = {
+                    //     let mut guard = value.lock().await;
+                    //     guard.take()
+                    // } {
+                    //     if let Err(e) = sock.write_all(&frame).await {
+                    //         eprintln!("Socket write failed: {}", e);
+                    //     }
+                    //     let mut guard = value.lock().await;
+                    //     guard.replace(sock);
+                    // }
+                
+                }
 
-                // if let Some(mut sock) = {
-                //     let mut guard = value.lock().await;
-                //     guard.take()
-                // } {
-                //     if let Err(e) = sock.write_all(&frame).await {
-                //         eprintln!("Socket write failed: {}", e);
-                //     }
-                //     let mut guard = value.lock().await;
-                //     guard.replace(sock);
-                // }
-            
+                
+
+                Some((Ok::<_, std::io::Error>(Bytes::from(frame)), ()))
+            } else {
+                Some((Ok::<_, std::io::Error>(Bytes::from(vec![])), ()))
             }
-
-            
-
-            Some((Ok::<_, std::io::Error>(Bytes::from(frame)), ()))
         }
     });
 
@@ -179,16 +182,17 @@ async fn mjpeg_stream(socket: Arc<RwLock<TcpStream>>, image: Arc<RwLock<ImageDat
             lock.client_total_frames.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             fps += 1;
             missed = 0;
-            println!("Frames recieved: {}", lock.client_total_frames.load(std::sync::atomic::Ordering::Relaxed));
+            // println!("Frames recieved: {}", lock.client_total_frames.load(std::sync::atomic::Ordering::Relaxed));
             if let Some(metadata) = img_data.1 {
                 let parts: Vec<&str> = metadata.split('x').collect();
-                if parts.len() == 6 {
+                if parts.len() == 7 {
                     lock.width = parts[0].parse::<u32>().unwrap_or(lock.width);
                     lock.height = parts[1].parse::<u32>().unwrap_or(lock.height);
                     lock.format = parts[2].to_owned();
                     lock.encoder = parts[3].to_owned();
                     lock.server_fps.swap(parts[4].parse::<usize>().unwrap_or(lock.server_fps.load(std::sync::atomic::Ordering::Relaxed)), std::sync::atomic::Ordering::Relaxed);
                     lock.server_total_frames.swap(parts[5].parse::<usize>().unwrap_or(lock.server_total_frames.load(std::sync::atomic::Ordering::Relaxed)), std::sync::atomic::Ordering::Relaxed);
+                    lock.skip = match parts[6] {"1" => true, _ => false};
                 }
             }
         } else {
@@ -269,7 +273,7 @@ async fn connection_handler(stream: UnixStream, shared_clone: Arc<RwLock<ImageDa
     let mut buf_reader = BufReader::new(reader);
     let mut line = String::new();
     if buf_reader.read_line(&mut line).await.is_ok() {
-        println!("{}", line);
+        // println!("{}", line);
         if line.starts_with("GET /snapshot HTTP/1.1") {
             if let Some(img) = &shared_clone.read().await.frame {   
                 let now = Utc::now();
@@ -314,32 +318,37 @@ async fn connection_handler(stream: UnixStream, shared_clone: Arc<RwLock<ImageDa
             writer.write_all(headers.as_bytes()).await.unwrap();
             writer.flush().await.unwrap();
 
-            println!("Sent header {}", headers);
+            // println!("Sent header {}", headers);
 
             let mut prev_frame = None;
-            let mut interval = tokio::time::interval(Duration::from_millis(33));
+            // let mut interval = tokio::time::interval(Duration::from_millis(33));
             let mut first = true;
             let mut count = 0;
 
+            let mut skip = false;
             let mut fps = 0;
             let mut start = Instant::now();
+            let mut avg_frame_time = 0;
+            
             loop {
-                interval.tick().await;
+                let frame_time = Instant::now();
+                // interval.tick().await;
                 count += 1;
 
                 if start.elapsed() > Duration::from_secs(1) {
+                    println!("WEB SERVER FRAME TIME {}", avg_frame_time);
                     start = Instant::now();
                     client_clone.write().await.update_fps_from_header(line.clone(), fps);
                     fps = 0;
                 }
                 fps += 1;
-                let mut frame;
+                let mut frame = Vec::new();
                 if prev_frame.is_none() {
                     let lock = stream_shared.read().await;
                     let img = {
                         lock.frame.clone().unwrap()
                     };
-                    println!("img lock acquired parent {}/{}", _c_id.1, _c_id.0);
+                    // println!("img lock acquired parent {}/{}", _c_id.1, _c_id.0);
                     let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs_f64();
                     frame = Vec::new();
                     frame.extend_from_slice(format!(
@@ -352,7 +361,7 @@ async fn connection_handler(stream: UnixStream, shared_clone: Arc<RwLock<ImageDa
                         timestamp
                     ).as_bytes());
 
-                    println!("frame header: {}", String::from_utf8(frame.clone()).unwrap());
+                    // println!("frame header: {}", String::from_utf8(frame.clone()).unwrap());
                     // if let Some(img) = img {
                         frame.extend_from_slice(&img);
                     // }
@@ -361,62 +370,76 @@ async fn connection_handler(stream: UnixStream, shared_clone: Arc<RwLock<ImageDa
 
                     prev_frame.replace(frame.clone());
                 } else {
-                    let lock = tokio::time::timeout(Duration::from_millis(100), stream_shared.read()).await;
-                    if lock.is_ok() {
-                        let img = lock.unwrap().frame.clone().unwrap();
-                        println!("img length:{}", img.len());
-                        println!("img lock acquired parent {}/{}", _c_id.1, _c_id.0);
-                        let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs_f64();
-                        frame = Vec::new();
-                        frame.extend_from_slice(format!(
-                            "--boundarydonotcross\r\n\
-                            Content-Type: image/jpeg\r\n\
-                            Content-Length: {}\r\n\
-                            X-Timestamp: {:.6}\r\n\r\n",
-                            // img.as_ref().map_or(0, |i| i.len()),
-                            img.len(),
-                            timestamp
-                        ).as_bytes());
+                    let lock = tokio::time::timeout(Duration::from_millis(50), stream_shared.read()).await;
+                    if let Ok(lock) = lock {
+                        println!("SKIP STATUS: {}", lock.skip);
+                        if lock.skip == false {
+                            skip = false;
+                            let img = lock.frame.clone().unwrap();
+                            // println!("img length:{}", img.len());
+                            // println!("img lock acquired parent {}/{}", _c_id.1, _c_id.0);
+                            let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs_f64();
+                            frame = Vec::new();
+                            frame.extend_from_slice(format!(
+                                "--boundarydonotcross\r\n\
+                                Content-Type: image/jpeg\r\n\
+                                Content-Length: {}\r\n\
+                                X-Timestamp: {:.6}\r\n\r\n",
+                                // img.as_ref().map_or(0, |i| i.len()),
+                                img.len(),
+                                timestamp
+                            ).as_bytes());
 
-                        println!("frame header: {}", String::from_utf8(frame.clone()).unwrap());
-                        // if let Some(img) = img {
-                            frame.extend_from_slice(&img);
-                        // }
+                            // println!("frame header: {}", String::from_utf8(frame.clone()).unwrap());
+                            // if let Some(img) = img {
+                                frame.extend_from_slice(&img);
+                            // }
 
-                        frame.extend_from_slice(b"\r\n");
-                        prev_frame.replace(frame.clone());
+                            frame.extend_from_slice(b"\r\n");
+                            prev_frame.replace(frame.clone());
+                        } else {
+                            skip = true;
+                        }
                     } else {
                         frame = prev_frame.as_ref().unwrap().clone();
-                        println!("using previous image because lock was not acquired");
+                        // println!("using previous image because lock was not acquired");
                     }
                 }
 
-                println!("frame data ready and sending");
-                println!("FRAMES RECIEVED AND PROCESSED COUNT:     {}", count);
-
-                if let Err(e) = writer.write_all(&frame).await {
-                    eprintln!("Failed conneciton, {}", e);
-                    break;
-                }
-                if let Err(e) = writer.flush().await {
-                    eprintln!("Failed flush, {}", e);
-                    break;
-                }
-
-                tokio::time::sleep(Duration::from_millis(10)).await;
-
-                if first {
-                    first = false;
-                    if let Some(client) = client_clone.write().await.get_client_from_header(line.clone()) {
-                        client.update_fps(30);
-                    } else {
+                // println!("frame data ready and sending");
+                // println!("FRAMES RECIEVED AND PROCESSED COUNT:     {}", count);
+                if !skip {
+                    if let Err(e) = writer.write_all(&frame).await {
+                        eprintln!("Failed conneciton, {}", e);
                         break;
                     }
+                    if let Err(e) = writer.flush().await {
+                        eprintln!("Failed flush, {}", e);
+                        break;
+                    }
+
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+
+                    if first {
+                        first = false;
+                        if let Some(client) = client_clone.write().await.get_client_from_header(line.clone()) {
+                            client.update_fps(30);
+                        } else {
+                            break;
+                        }
+                    }
+                    if avg_frame_time != 0 {
+                        avg_frame_time = (avg_frame_time + frame_time.elapsed().as_millis())/2;
+                    } else {
+                        avg_frame_time = frame_time.elapsed().as_millis();
+                    } 
+                } else {
+                    println!("Skipping identical frame");
                 }
             }
             client_clone.write().await.remove_client_from_header(line.clone());
 
-        } else if line.starts_with("GET /state") {
+        }  else if line.starts_with("GET /state") {
             let lock = shared_clone.read().await;
             let cframe_num = lock.client_total_frames.load(std::sync::atomic::Ordering::Relaxed);
             let cfps = lock.client_fps.load(std::sync::atomic::Ordering::Relaxed);

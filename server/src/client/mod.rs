@@ -1,7 +1,6 @@
 use std::{collections::HashMap, time::Instant};
 
 use serde_json::{json, Value};
-use sha2::Digest;
 
 #[derive(Debug, Clone)]
 pub struct ClientDetails {

@@ -1,0 +1,3 @@
+enum CaptureError {
+    DeviceOpenError,
+}

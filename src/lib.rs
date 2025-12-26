@@ -3,6 +3,7 @@ pub mod server;
 pub mod lock;
 #[cfg(mpp_accel)] 
 pub mod rk_mpp;
+pub mod error;
 
 
 pub struct Color {

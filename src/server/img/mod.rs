@@ -82,6 +82,7 @@ struct StreamState {
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 pub struct ImageData{
+    pub skip: bool,
     pub frame: Option<Vec<u8>>,
     pub width: u32,
     pub height: u32,
@@ -96,6 +97,7 @@ pub struct ImageData{
 impl ImageData {
     pub fn new() -> Self {
         ImageData {
+            skip: false,
             frame: None, 
             width: 1920, 
             height: 1080, 
