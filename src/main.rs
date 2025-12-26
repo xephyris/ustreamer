@@ -73,8 +73,27 @@ async fn main() {
 
     let file = dev.as_raw_fd();
     let filefd = dev.as_fd();
+    let q_type;
 
-    let mut format:Format = ioctl::g_fmt(&file, QueueType::VideoCaptureMplane).unwrap();
+    let mut format:Format = match ioctl::g_fmt(&file, QueueType::VideoCaptureMplane) {
+        Ok(fmt) => {
+            q_type = QueueType::VideoCaptureMplane;
+            fmt
+        },
+        Err(error) => {
+            eprintln!("Multiplanar formats unsupported");
+            match ioctl::g_fmt(&file, QueueType::VideoCapture) {
+                Ok(fmt) => {
+                    q_type = QueueType::VideoCapture;
+                    println!("Initialized with single planar format");
+                    fmt
+                },
+                Err(err) => {
+                    panic!("No supported capture formats found {:#?}", err);
+                }
+            }
+        }
+    };
     println!("Format: {:?}", format);
     width = format.width as usize;
     height = format.height as usize;
@@ -89,11 +108,11 @@ async fn main() {
     // let mut queue = Queue::get_capture_mplane_queue(dev.clone()).unwrap();
     // queue.set_format(new_format).unwrap();
 
-    println!("New FORMAT: {:?}", ioctl::g_fmt::<Format>(&file, QueueType::VideoCaptureMplane));
-    let mut pixelformat = ioctl::g_fmt::<Format>(&file, QueueType::VideoCaptureMplane).unwrap().pixelformat.to_string();
+    println!("New FORMAT: {:?}", ioctl::g_fmt::<Format>(&file, q_type));
+    let mut pixelformat = ioctl::g_fmt::<Format>(&file, q_type).unwrap().pixelformat.to_string();
     
 
-    let mut req: RequestBuffers = reqbufs(&file, QueueType::VideoCaptureMplane, MemoryType::Mmap, 4, MemoryConsistency::empty()).unwrap();
+    let mut req: RequestBuffers = reqbufs(&file, q_type, MemoryType::Mmap, 4, MemoryConsistency::empty()).unwrap();
     println!("Requested {} buffers", req.count);
 
     let mut frames = 0;
@@ -175,17 +194,17 @@ async fn main() {
             
             unsafe {
                 for i in 0..req.count {
-                    let buf = V4l2Buffer::new(QueueType::VideoCaptureMplane, i, MemoryType::Mmap);
+                    let buf = V4l2Buffer::new(q_type, i, MemoryType::Mmap);
                     qbuf::<V4l2Buffer, V4l2Buffer>(&file, buf);
                 }
                 
             }
 
             use v4l2r::ioctl::streamon;
-            streamon(&file, QueueType::VideoCaptureMplane).unwrap();
+            streamon(&file, q_type).unwrap();
 
             use v4l2r::ioctl::dqbuf;
-            let buf: V4l2Buffer = match dqbuf(&file, QueueType::VideoCaptureMplane) {
+            let buf: V4l2Buffer = match dqbuf(&file, q_type) {
                 Ok(buf) => {
                     buf
                 },
@@ -196,9 +215,10 @@ async fn main() {
                 }
             };
 
-            // println!("Number of PLANES {}", buf.num_planes());
+            println!("Number of PLANES {}", buf.num_planes());
             let plane = buf.get_first_plane();
-            let data = mmap(&filefd, *plane.data_offset.unwrap() as u32, *plane.length).unwrap();
+            println!("plane len: {}", plane.length);
+            let data = mmap(&filefd, if let Some(offset) = plane.data_offset {*offset} else {0}, *plane.length).unwrap();
             if data.data == last_buf && skip_repeats {
                 frames += 1;
                 // println!("REPEATED FRAMES FOUND!!!");
@@ -209,7 +229,7 @@ async fn main() {
             }
             
             let jpeg_data = encode_jpeg(data, width, height, &pixelformat);
-                
+            std::fs::write("jpeg_test.jpg", &jpeg_data);
            let mut lock = shared_image_clone.write().await;
                 let mut metadata = format!("{width}x{height}x{pixelformat}x{encoder}x{fps}x{total_frames}");
                 lock.frame = Some(jpeg_data.clone());
@@ -365,7 +385,7 @@ fn encode_jpeg(data: PlaneMapping, width:usize, height: usize, pixelformat: &str
     use turbojpeg::OwnedBuf;
 
     println!("Using CPU for encoding");
-    let mut jpeg_data = OwnedBuf::new();
+    let mut jpeg_data = Vec::new();
     let raw = data.data.to_vec();
     if pixelformat == "NV12" {
         let mut rgb_buf = vec![0u8; (width * height * 3) as usize];
@@ -379,7 +399,7 @@ fn encode_jpeg(data: PlaneMapping, width:usize, height: usize, pixelformat: &str
             format: turbojpeg::PixelFormat::RGB
         };
 
-        jpeg_data = compress(image, 80, Subsamp::Sub2x2).unwrap();
+        jpeg_data = compress(image, 80, Subsamp::Sub2x2).unwrap().to_vec();
 
         // println!("Conversion processing time: {}", processing.elapsed().as_millis());    
         // let file = File::create(format!("output_{}.jpg", 0)).unwrap();
@@ -394,7 +414,7 @@ fn encode_jpeg(data: PlaneMapping, width:usize, height: usize, pixelformat: &str
             format: turbojpeg::PixelFormat::BGR
         };
 
-        jpeg_data = compress(image, 80, Subsamp::Sub2x2).unwrap();
+        jpeg_data = compress(image, 80, Subsamp::Sub2x2).unwrap().to_vec();
 
         // Write JPEG to file
         // std::fs::write("outputbgr.jpg", &jpeg_data).unwrap();
@@ -419,9 +439,27 @@ fn encode_jpeg(data: PlaneMapping, width:usize, height: usize, pixelformat: &str
             format: turbojpeg::PixelFormat::RGB
         };
 
-        jpeg_data = compress(image, 80, Subsamp::Sub2x2).unwrap();
+        jpeg_data = compress(image, 80, Subsamp::Sub2x2).unwrap().to_vec();
     }
-    jpeg_data.to_vec()
+
+    if pixelformat == "YUYV" {
+        let rgb_buf = ustreamer::converters::yuyv_to_rgb_yuv(&data, width as u32, height as u32);
+        
+        let image = Image {
+                pixels: rgb_buf.as_slice(),
+                width: width,
+                pitch: width * 3,
+                height: height,
+                format: turbojpeg::PixelFormat::RGB,
+        };  
+
+        jpeg_data = compress(image, 80, Subsamp::Sub2x2).unwrap().to_vec();
+    }
+
+    if pixelformat == "MJPG" {
+        jpeg_data = raw;
+    }
+    jpeg_data
 }
 
 fn init_axum_server(port: u32, shared: Arc<RwLock<ImageData>>) {

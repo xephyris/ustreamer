@@ -30,7 +30,7 @@ async fn main() {
     eprintln!("Removing old socket...");
     std::fs::remove_file(socket_path).ok();
 
-    let unix = true;
+    let unix = false;
     eprintln!("Binding to new socket");
 
 

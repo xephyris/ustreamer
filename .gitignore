@@ -11,3 +11,4 @@
 *.mjpeg
 *.mp4
 /legacy
+/ustreamer-legacy

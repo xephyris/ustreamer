@@ -38,7 +38,7 @@ pub async fn start_axum(port: u32, shared: Arc<RwLock<ImageData>>) {
     eprintln!("Removing old socket...");
     std::fs::remove_file(socket_path).ok();
 
-    let unix = true;
+    let unix = false;
     eprintln!("Binding to new socket");
 
     tokio::spawn(async move {
