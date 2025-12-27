@@ -5,12 +5,14 @@ use crate::converters::rk_rga;
 
 use crate::StreamPixelFormat;
 
-pub fn encode_jpeg(raw_buf: Vec<u8>, width: u32, height: u32, quality: u8, format: StreamPixelFormat) -> Option<Vec<u8>> {
+pub fn encode_jpeg(mut raw_buf: Vec<u8>, width: u32, height: u32, quality: u8, format: StreamPixelFormat) -> Option<Vec<u8>> {
 
-    let (raw_buf, frame_size) = convert_to_nv12(raw_buf, width, height, format);
+    let (mut raw_buf, frame_size) = convert_to_nv12(raw_buf, width, height, format);
 
     let width = width as i32;
     let height = height as i32;
+    let aligned_h = (height + 15) & !15;  // round up to multiple of 16
+    let aligned_w = (width + 15) & !15;
     let quality = quality as i32;
     
     // println!("Set Quality Configs");
@@ -34,7 +36,7 @@ pub fn encode_jpeg(raw_buf: Vec<u8>, width: u32, height: u32, quality: u8, forma
         mpp_enc_cfg_set_s32(cfg, b"prep:format\0" as *const _ , MppFrameFormat_MPP_FMT_YUV420SP as i32);
         mpp_enc_cfg_set_s32(cfg, b"rc:mode\0" as *const _ , MppEncRcMode_e_MPP_ENC_RC_MODE_FIXQP as i32);
         mpp_enc_cfg_set_s32(cfg, b"jpeg:q_factor\0" as *const _,quality); 
-        mpp_enc_cfg_set_s32(cfg, b"jpeg:qf_max\0" as *const _ , 100);
+        mpp_enc_cfg_set_s32(cfg, b"jpeg:qf_max\0" as *const _ , 80);
         mpp_enc_cfg_set_s32(cfg, b"jpeg:qf_min\0" as *const _, 1);
 
 
@@ -48,7 +50,8 @@ pub fn encode_jpeg(raw_buf: Vec<u8>, width: u32, height: u32, quality: u8, forma
         } else {
             panic!("Null Control Function")
         }
-                
+        
+
         let mut input_buf: MppBuffer = std::ptr::null_mut();
 
         let ret = mpp_buffer_get_with_tag(
@@ -56,15 +59,34 @@ pub fn encode_jpeg(raw_buf: Vec<u8>, width: u32, height: u32, quality: u8, forma
                 &mut input_buf,
                 frame_size,
                 std::ptr::null(),
-                b"main".as_ptr(),
+                b"main\0".as_ptr(),
             );
 
         if ret != 0 || input_buf.is_null() {
             panic!("Failed to get MPP buffer");
         }
 
-        let buf_ptr = mpp_buffer_get_ptr_with_caller(input_buf, b"main".as_ptr()) as *mut u8;
+        // println!("INPUT BUF: {:?}", input_buf);
+        // let buf_size = unsafe { mpp_buffer_get_size_with_caller(input_buf, b"main\0".as_ptr()) } as usize; println!("buf_size = {}", buf_size); 
+        // let buf_ptr = mpp_buffer_get_ptr_with_caller(input_buf, b"main\0".as_ptr()) as *mut u8;
+        // println!("buf_ptr = {:?}", buf_ptr); if buf_ptr.is_null() { panic!("mpp_buffer_get_ptr_with_caller returned null"); } 
+        
+        // assert!(buf_size >= frame_size); 
+        // unsafe { std::ptr::copy_nonoverlapping(raw_buf.as_ptr(), buf_ptr, frame_size); }
+        // // std::ptr::copy_nonoverlapping(raw_buf.as_ptr(), buf_ptr, frame_size);
+        assert!(raw_buf.len() >= frame_size);
+
+        let buf_size = mpp_buffer_get_size_with_caller(input_buf, b"main\0".as_ptr()) as usize;
+
+        assert!(buf_size >= frame_size);
+        let buf_ptr = mpp_buffer_get_ptr_with_caller(input_buf, b"main\0".as_ptr()) as *mut u8;
+
+        if buf_ptr.is_null() {
+            panic!("mpp_buffer_get_ptr_with_caller returned null");
+        }
+
         std::ptr::copy_nonoverlapping(raw_buf.as_ptr(), buf_ptr, frame_size);
+
 
         let mut frame: MppFrame = std::ptr::null_mut() as *mut _ ;
         mpp_frame_init(&mut frame);
@@ -128,13 +150,16 @@ fn convert_to_nv12(mut raw_buf: Vec<u8>, width: u32, height: u32, format: Stream
         StreamPixelFormat::NV24 => {
             raw_buf = crate::converters::nv24_444_to_nv12(&raw_buf, width, height);
             frame_size = (width * ((height + 15) & !15) * 3 / 2) as usize;
+            raw_buf.resize(frame_size, 0);
         },
         StreamPixelFormat::BGR3 => {
             raw_buf = rk_rga::bgr_to_nv12(raw_buf, width, height);
             frame_size = (width * ((height + 15) & !15) * 3 / 2) as usize;
+            raw_buf.resize(frame_size, 0);
         }
         StreamPixelFormat::NV12 => {
             frame_size = (width * ((height + 15) & !15) * 3 / 2) as usize;
+            raw_buf.resize(frame_size, 0);
         }
     }
     (raw_buf, frame_size)
@@ -148,13 +173,16 @@ fn convert_to_nv12(mut raw_buf: Vec<u8>, width: u32, height: u32, format: Stream
         StreamPixelFormat::NV24 => {
             raw_buf = crate::converters::nv24_444_to_nv12(&raw_buf, width, height);
             frame_size = (width * ((height + 15) & !15) * 3 / 2) as usize;
+            raw_buf.resize(frame_size, 0);
         },
         StreamPixelFormat::BGR3 => {
             raw_buf = crate::converters::bgr3_888_to_nv12(&raw_buf, width as usize, height as usize);
             frame_size = (width * ((height + 15) & !15) * 3 / 2) as usize;
+            raw_buf.resize(frame_size, 0);
         }
         StreamPixelFormat::NV12 => {
             frame_size = (width * ((height + 15) & !15) * 3 / 2) as usize;
+            raw_buf.resize(frame_size, 0);
         }
     }
     (raw_buf, frame_size)
