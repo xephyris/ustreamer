@@ -126,6 +126,8 @@ async fn main() {
     let mut avg_frame_time = 0;
 
     let mut reset = false;
+
+    let mut same = 0;
     
     loop {
 
@@ -217,26 +219,36 @@ async fn main() {
             let mut server_skip = 0;
             let data = mmap(&filefd, if let Some(offset) = plane.data_offset {*offset} else {0}, *plane.length).unwrap();
             if skip_repeats && embedded{
-                if data.data == last_buf.as_slice() {
+                if data.data == last_buf.as_slice() && frames % 3 == 0{
+                    same += 1;
                     frames += 1;
                     // println!("REPEATED FRAMES FOUND!!!");
                     rframes += 1;
                     let mut lock = shared_image_clone.write().await;
                     lock.skip = true;
                     continue
-                } else {
+                } else if frames % 3 == 0{
+                    same = 0;
                     last_buf = data.data.to_vec();
                 }
-            } else {
-                if data.data == last_buf.as_slice() {
-                    frames += 1;
+            } else if skip_repeats{
+                if data.data == last_buf.as_slice() && frames % 3 == 0 {
+                    same += 1;
+                    frames += 1; 
                     println!("REPEATED FRAMES FOUND!!!");
                     rframes += 1;
                     server_skip = 1; // For External Server Use;
-                } else {
+                } else if frames % 3 == 0{
                     last_buf = data.data.to_vec();
                     server_skip = 0;
+                    same = 0;
                 }
+            }
+
+            if same > 10 {
+                server_skip = 1;
+                let mut lock = shared_image_clone.write().await;
+                lock.skip = true;
             }
             
             let jpeg_data = encode_jpeg(data, width, height, &pixelformat, 40);

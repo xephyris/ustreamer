@@ -95,6 +95,7 @@ async fn attach_socket(image_data: Arc<RwLock<ImageData>>) {
             }, 
             Err(_) => {
                 eprintln!("Failed to connect to socket. Is the image server running?");
+                shared_data.write().await.skip = true;
                 sleep(Duration::from_millis(200)).await;
             }
         }
