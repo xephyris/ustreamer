@@ -44,7 +44,7 @@ async fn main() {
     let embedded = false;
 
     let downscaling = false;
-    let skip_repeats = true;
+    let skip_repeats = false;
 
     let shared = Arc::new(RwLock::new(ImageData::new())); 
     let shared_image_clone = shared.clone();

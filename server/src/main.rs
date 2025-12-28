@@ -21,6 +21,12 @@ use chrono::format::strftime::StrftimeItems;
 // To send requests to socket
 // sudo socat - UNIX-CONNECT:/run/kvmd/ustreamer.sock
 
+// Run as another user
+// sudo -u
+
+// KVMD config files
+// sudo nano /usr/share/kvmd/web/share/js/kvm/stream_mjpeg.js 
+
 #[tokio::main]
 async fn main() {
     let shared = Arc::new(RwLock::new(ImageData::new())); 
@@ -30,7 +36,7 @@ async fn main() {
     eprintln!("Removing old socket...");
     std::fs::remove_file(socket_path).ok();
 
-    let unix = false;
+    let unix = true;
     eprintln!("Binding to new socket");
 
 
@@ -302,6 +308,7 @@ async fn connection_handler(stream: UnixStream, shared_clone: Arc<RwLock<ImageDa
                 println!("No image available");
             }
         } else if line.starts_with("GET /stream") {
+            println!("RECIEVED CLIENT {}", line.clone());
             let client_clone = client_list.clone();
             let stream_shared = shared_clone.clone();
             let _c_id = client_clone.write().await.add_client_from_header(line.clone());
@@ -330,7 +337,14 @@ async fn connection_handler(stream: UnixStream, shared_clone: Arc<RwLock<ImageDa
             let mut fps = 0;
             let mut start = Instant::now();
             let mut avg_frame_time = 0;
-            
+            let mut df_frame_sent = false;
+            let (dual_final_frame, advance_headers, extra_headers, zero_data) = {
+                if let Some((dff, ah, eh, zd)) = client_clone.read().await.get_client_settings(Some(_c_id.1)) {
+                    (dff, ah, eh, zd)
+                } else {
+                    (false, false, false, false)
+                }
+            };
             loop {
                 let frame_time = Instant::now();
                 // interval.tick().await;
@@ -347,7 +361,7 @@ async fn connection_handler(stream: UnixStream, shared_clone: Arc<RwLock<ImageDa
                 if prev_frame.is_none() {
                     let lock = stream_shared.read().await;
                     let img = {
-                        lock.frame.clone().unwrap()
+                        lock.frame.clone().unwrap_or(Vec::new())
                     };
                     // println!("img lock acquired parent {}/{}", _c_id.1, _c_id.0);
                     let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs_f64();
@@ -373,7 +387,7 @@ async fn connection_handler(stream: UnixStream, shared_clone: Arc<RwLock<ImageDa
                 } else {
                     let lock = tokio::time::timeout(Duration::from_millis(50), stream_shared.read()).await;
                     if let Ok(lock) = lock {
-                        println!("SKIP STATUS: {}", lock.skip);
+                        // println!("SKIP STATUS: {}", lock.skip);
                         if lock.skip == false {
                             skip = false;
                             let img = lock.frame.clone().unwrap();
@@ -410,6 +424,7 @@ async fn connection_handler(stream: UnixStream, shared_clone: Arc<RwLock<ImageDa
                 // println!("frame data ready and sending");
                 // println!("FRAMES RECIEVED AND PROCESSED COUNT:     {}", count);
                 if !skip {
+                    df_frame_sent = false;
                     if let Err(e) = writer.write_all(&frame).await {
                         eprintln!("Failed conneciton, {}", e);
                         break;
@@ -434,6 +449,16 @@ async fn connection_handler(stream: UnixStream, shared_clone: Arc<RwLock<ImageDa
                     } else {
                         avg_frame_time = frame_time.elapsed().as_millis();
                     } 
+                } else if !df_frame_sent && dual_final_frame && let Some(ref prev_frame) = prev_frame{
+                    df_frame_sent = true;
+                    if let Err(e) = writer.write_all(&prev_frame).await {
+                        eprintln!("Failed conneciton, {}", e);
+                        break;
+                    }
+                    if let Err(e) = writer.flush().await {
+                        eprintln!("Failed flush, {}", e);
+                        break;
+                    }
                 } else {
                     println!("Skipping identical frame");
                 }
@@ -504,7 +529,7 @@ async fn connection_handler(stream: UnixStream, shared_clone: Arc<RwLock<ImageDa
             response.extend_from_slice(json_body.len().to_string().as_bytes());
             response.extend_from_slice(b"\r\n\r\n");
             response.extend_from_slice(json_body.as_bytes());
-            println!("Sending response:\n{}", String::from_utf8_lossy(&response));
+            // println!("Sending response:\n{}", String::from_utf8_lossy(&response));
         
             if let Err(e) = writer.write_all(&response).await {
                 eprintln!("Failed to send JSON response: {}", e);
@@ -559,7 +584,7 @@ async fn connection_handler(stream: UnixStream, shared_clone: Arc<RwLock<ImageDa
             response.extend_from_slice(json_body.len().to_string().as_bytes());
             response.extend_from_slice(b"\r\n\r\n");
             response.extend_from_slice(json_body.as_bytes());
-            println!("Sending response:\n{}", String::from_utf8_lossy(&response));
+            // println!("Sending response:\n{}", String::from_utf8_lossy(&response));
         
             if let Err(e) = writer.write_all(&response).await {
                 eprintln!("Failed to send JSON response: {}", e);

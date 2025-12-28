@@ -17,38 +17,106 @@ pub struct ClientDetails {
 
 impl ClientDetails {
     pub fn new(key: Option<String>) -> Self {
+        let mut dual_final_frames = false;
+        let mut advance_headers = false;
+        let mut extra_headers = false;
+        let mut zero_data = false;
+        let mut new_key = String::from("0");
+        if let Some(key) = key {
+            if key.contains("&") {
+                let segments: Vec<&str> = key.split("&").collect();
+                new_key = String::from(segments[0]);
+                for segment in segments {
+                    match segment {
+                        "dual_final_frames=1" => {
+                            dual_final_frames = true;
+                        }
+                        "advance_headers=1" => {
+                            advance_headers = true;
+                        }
+                        "zero_data=1" => {
+                            zero_data = true;
+                        }
+                        "extra_headers=1" => {
+                            extra_headers = true;
+                        }
+                        _ => {
+                            println!("Setting not detected")
+                        }
+                    }
+                }
+            } else {
+                new_key = key;
+            }
+        }
         // Maybe add ip as parameter
         ClientDetails { 
             id: generate_id(), 
             connected_at: Instant::now(), 
             last_frame_time: Instant::now(), 
             fps: 0, 
-            extra_headers: false, 
-            advance_headers: false, 
-            dual_final_frames: false, 
-            zero_data: false, 
-            key: if let Some(key) = key {key} else {String::from("0")}, 
+            extra_headers, 
+            advance_headers, 
+            dual_final_frames, 
+            zero_data, 
+            key: new_key, 
         }
     }
 
     pub fn from_header(header: String) -> Self {
         let key = parse_key_from_header(header);
+        let mut dual_final_frames = false;
+        let mut advance_headers = false;
+        let mut extra_headers = false;
+        let mut zero_data = false;
+        let mut new_key = String::from("0");
+        if let Some(key) = key {
+            if key.contains("&") {
+                let segments: Vec<&str> = key.split("&").collect();
+                new_key = String::from(segments[0]);
+                for segment in segments {
+                    match segment {
+                        "dual_final_frames=1" => {
+                            dual_final_frames = true;
+                        }
+                        "advance_headers=1" => {
+                            advance_headers = true;
+                        }
+                        "zero_data=1" => {
+                            zero_data = true;
+                        }
+                        "extra_headers=1" => {
+                            extra_headers = true;
+                        }
+                        _ => {
+                            println!("Setting not detected")
+                        }
+                    }
+                }
+            } else {
+                new_key = key;
+            }
+        }
         // Maybe add ip as parameter
         ClientDetails { 
             id: generate_id(), 
             connected_at: Instant::now(), 
             last_frame_time: Instant::now(), 
             fps: 30, 
-            extra_headers: false, 
-            advance_headers: false, 
-            dual_final_frames: false, 
-            zero_data: false, 
-            key: if let Some(key) = key {key} else {String::from("0")}, 
+            extra_headers, 
+            advance_headers, 
+            dual_final_frames, 
+            zero_data, 
+            key: new_key, 
         }
     }
 
     pub fn update_fps(&mut self, fps: u32) {
         self.fps = fps;
+    }
+
+    pub fn get_settings(&self) -> (bool, bool, bool, bool) {
+        (self.dual_final_frames, self.advance_headers, self.extra_headers, self.zero_data)
     }
 
     pub fn to_json(&self) -> serde_json::Value {
@@ -84,18 +152,18 @@ impl Clients {
         Clients {
             queued: 30,
             clients: 0,
-            max_clients: 2,
+            max_clients: 10,
             stats: HashMap::new(),
             age: Vec::new(),
         }
     }
 
     pub fn add_client(&mut self, key: Option<String>) -> String {
-        self.clients += 1;
         let client = ClientDetails::new(key.clone());
         let id = client.id.clone();
         self.stats.insert(key.clone().unwrap_or(String::from("0")), client);
         self.age.push(key.unwrap_or(String::from("0")));
+        self.clients = self.stats.len() as u32;
         id
     } 
 
@@ -104,7 +172,7 @@ impl Clients {
         if self.clients > self.max_clients {
             self.stats.remove(self.age.get(0).unwrap());
             self.age.remove(0);
-            self.clients -= 1;
+            self.clients = self.stats.len() as u32;
         }
         let client = ClientDetails::from_header(header);
         let id = client.id.clone();
@@ -113,20 +181,27 @@ impl Clients {
         self.age.push(key.clone());
         println!("client added {:?}", client);
         println!("Client count {}", self.clients);
+        self.clients = self.stats.len() as u32;
         (id, key)
     } 
 
+    pub fn get_client_settings(&self, key: Option<String>) -> Option<(bool, bool, bool, bool)> {
+        if let Some(client) = self.stats.get(&key.clone().unwrap_or(String::from("0"))) {
+            Some(client.get_settings())
+        } else {
+            None
+        }
+    }
+
     pub fn remove_client(&mut self, key: Option<String>) {
-        if let Some(_) = self.stats.remove(&key.clone().unwrap_or(String::from("0"))) {
-            self.clients -= 1;
-        } 
+        let _removed = self.stats.remove(&key.clone().unwrap_or(String::from("0")));
+        self.clients = self.stats.len() as u32;
     }
 
     pub fn remove_client_from_header(&mut self, header: String) {
         let key = parse_key_from_header(header);
-        if let Some(_) = self.stats.remove(&key.clone().unwrap_or(String::from("0"))) {
-            self.clients -= 1;
-        } 
+        let _removed = self.stats.remove(&key.clone().unwrap_or(String::from("0")));
+        self.clients = self.stats.len() as u32;
     }
 
     pub fn to_json(&self) -> serde_json::Value {
