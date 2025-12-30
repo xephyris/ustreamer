@@ -9,11 +9,11 @@ fn main() {
     if Path::new("/dev/mpp_service").exists() {
         println!("cargo:rustc-cfg=mpp_accel");
         println!("cargo:rustc-link-lib=rockchip_mpp"); 
-        println!("cargo:rustc-link-search=native=mpp/inc"); 
+        println!("cargo:rustc-link-search=native={}/mpp/inc", env!("CARGO_MANIFEST_DIR")); 
         let bindings_mpp = bindgen::Builder::default()
-            .header("mpp/wrapper.h")
-            .clang_arg("-Impp/inc")
-            .clang_arg("-Impp/osal/inc")
+            .header(&format!("{}/mpp/wrapper.h", env!("CARGO_MANIFEST_DIR")))
+            .clang_arg(&format!("-I{}/mpp/inc", env!("CARGO_MANIFEST_DIR")))
+            .clang_arg(&format!("-I{}/mpp/osal/inc", env!("CARGO_MANIFEST_DIR")))
             .blocklist_item("FP_NAN")
             .blocklist_item("FP_INFINITE")
             .blocklist_item("FP_ZERO")
@@ -24,32 +24,32 @@ fn main() {
             .expect("Unable to generate bindings");
 
        
-        let bindings_dir = out_path.join("mpp");
+        let bindings_dir = out_path.join(&format!("{}/mpp", env!("CARGO_MANIFEST_DIR")));
         std::fs::create_dir_all(&bindings_dir).expect("Failed to create output directory");
 
         bindings_mpp
-            .write_to_file(out_path.join("mpp/bindings.rs"))
+            .write_to_file(out_path.join(&format!("{}/mpp/bindings.rs", env!("CARGO_MANIFEST_DIR"))))
             .expect("Couldn't write bindings!");
     }
     if Path::new("/dev/rga").exists() {
         println!("cargo:rustc-cfg=rga_converter");
         println!("cargo:rustc-link-lib=stdc++");
-        println!("cargo:rustc-link-search=native=rga");
+        println!("cargo:rustc-link-search=native={}/rga", env!("CARGO_MANIFEST_DIR"));
         println!("cargo:rustc-link-lib=static=rga");
-        println!("cargo:rustc-link-search=native=rga/include");
+        println!("cargo:rustc-link-search=native={}/rga/include", env!("CARGO_MANIFEST_DIR"));
         let bindings_rga = bindgen::Builder::default()
-            .header("rga/wrapper.h")
-            .clang_arg("-Irga/include")
-            .clang_arg("-Irga/im2d_api")
+            .header(&format!("{}/rga/wrapper.h", env!("CARGO_MANIFEST_DIR")))
+            .clang_arg(&format!("-I{}/rga/include", env!("CARGO_MANIFEST_DIR")))
+            .clang_arg(&format!("-I{}rga/im2d_api", env!("CARGO_MANIFEST_DIR")))
             .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()))
             .generate()
             .expect("Unable to generate bindings");
 
-        let bindings_dir = out_path.join("rga");
+        let bindings_dir = out_path.join(&format!("{}/rga", env!("CARGO_MANIFEST_DIR")));
         std::fs::create_dir_all(&bindings_dir).expect("Failed to create output directory"); 
 
         bindings_rga
-            .write_to_file(out_path.join("rga/bindings.rs"))
+            .write_to_file(out_path.join(&format!("{}/rga/bindings.rs", env!("CARGO_MANIFEST_DIR"))))
             .expect("Couldn't write bindings!");
     }
 }

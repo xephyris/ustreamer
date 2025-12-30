@@ -119,7 +119,7 @@ pub fn nv24_to_rgb_yuv(buf: &[u8], width: usize, height: usize, rgb_buf: &mut Ve
         width: wu32, 
         height: hu32 };
     assert_eq!(buf.len(), ((width * height) * 15 / 10) as usize);
-    yuv_nv24_to_rgb(&biplanar, rgb_buf, width as u32 * 3, YuvRange::Limited, YuvStandardMatrix::Bt709, YuvConversionMode::Fast).unwrap();
+    yuv_nv24_to_rgb(&biplanar, rgb_buf, width as u32 * 3, YuvRange::Full, YuvStandardMatrix::Bt709, YuvConversionMode::Fast).unwrap();
 }
 
 pub fn bgr3_888_to_nv12(buf: &[u8], width: usize, height: usize) -> Vec<u8> {
@@ -133,7 +133,7 @@ pub fn bgr3_888_to_nv12(buf: &[u8], width: usize, height: usize) -> Vec<u8> {
         width: wu32, 
         height: hu32 };
     // assert_eq!(buf.len(), ((width * height) * 15 / 10).try_into().unwrap());
-    yuv::bgr_to_yuv_nv12(&mut biplanar, buf, (width * 3) as u32, YuvRange::Limited, YuvStandardMatrix::Bt709, YuvConversionMode::Fast).unwrap();
+    yuv::bgr_to_yuv_nv12(&mut biplanar, buf, (width * 3) as u32, YuvRange::Full, YuvStandardMatrix::Bt709, YuvConversionMode::Fast).unwrap();
     let mut out = Vec::new();
     out.extend_from_slice(biplanar.y_plane.borrow());
     out.extend_from_slice(biplanar.uv_plane.borrow());

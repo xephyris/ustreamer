@@ -36,6 +36,13 @@ use ustreamer::rk_mpp;
 // TODO Implement support for single planar formats & native mjpeg
 // ? Separate rk_mpp and rga to new project?
 
+// Install deps
+// uuid-dev libjpeg-dev build-essentials 
+
+// Test build issues
+// https://users.rust-lang.org/t/c-rust-bindings-build-works-but-test-fails/72421
+
+
 // set CPATH when building: 
 // export CPATH="/usr/include:/usr/include/aarch64-linux-gnu"
 // FFMPEG Recording :  ffmpeg -f v4l2 -pixel_format nv12 -video_size 1920x1080 -i /dev/video0        -c:v mjpeg -pix_fmt yuvj422p -f avi output1.avi
@@ -251,7 +258,7 @@ async fn main() {
                 lock.skip = true;
             }
             
-            let jpeg_data = encode_jpeg(data, width, height, &pixelformat, 40);
+            let mut jpeg_data = encode_jpeg(data, width, height, &pixelformat, 80);
             let mut lock = shared_image_clone.write().await;
             let metadata = format!("{width}x{height}x{pixelformat}x{encoder}x{fps}x{total_frames}");
             lock.frame = Some(jpeg_data.clone());
