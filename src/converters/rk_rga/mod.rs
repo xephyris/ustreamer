@@ -8,8 +8,9 @@ pub fn bgr_to_nv12(mut raw_buf: Vec<u8>, width: u32, height: u32) -> Vec<u8> {
     let dest_buf_ptr = output_buf.as_mut_ptr();
     unsafe {
         let src = wrapbuffer_virtualaddr(raw_buf_ptr as *mut c_void, width, height, _Rga_SURF_FORMAT_RK_FORMAT_BGR_888, None);
-        let dst = wrapbuffer_virtualaddr(dest_buf_ptr as *mut c_void, width, height, _Rga_SURF_FORMAT_RK_FORMAT_YCbCr_420_SP, None);
+        let mut dst = wrapbuffer_virtualaddr(dest_buf_ptr as *mut c_void, width, height, _Rga_SURF_FORMAT_RK_FORMAT_YCbCr_420_SP, None);
         let pat = wrapbuffer_virtualaddr(std::ptr::null_mut(), 0, 0, _Rga_SURF_FORMAT_RK_FORMAT_UNKNOWN, None);
+        // imsetColorSpace(&mut dst as *mut _, IM_COLOR_SPACE_MODE_IM_YUV_BT709_FULL_RANGE);
 
         let src_rect: im_rect = im_rect{
             x: 0, 

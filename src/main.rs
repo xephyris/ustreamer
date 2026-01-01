@@ -59,7 +59,7 @@ async fn main() {
     
     
     let _lock = StreamLock::aquire_lock("/run/kvmd/ustreamer.lock".to_string());
-    let (listener   , port) = bind_socket();
+    let (listener, port) = bind_socket();
 
     let mut server_started = false;
     // Start client

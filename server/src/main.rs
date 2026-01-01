@@ -20,6 +20,7 @@ use chrono::format::strftime::StrftimeItems;
 
 // To send requests to socket
 // sudo socat - UNIX-CONNECT:/run/kvmd/ustreamer.sock
+// sudo socat TCP4-LISTEN:8080,fork,reuseaddr,bind=0.0.0.0 UNIX-CONNECT:/run/kvmd/ustreamer.sock
 
 // Run as another user
 // sudo -u
@@ -280,7 +281,7 @@ async fn connection_handler(stream: UnixStream, shared_clone: Arc<RwLock<ImageDa
     let mut buf_reader = BufReader::new(reader);
     let mut line = String::new();
     if buf_reader.read_line(&mut line).await.is_ok() {
-        // println!("{}", line);
+        println!("{}", line);
         if line.starts_with("GET /snapshot HTTP/1.1") {
             if let Some(img) = &shared_clone.read().await.frame {   
                 let now = Utc::now();
@@ -366,15 +367,25 @@ async fn connection_handler(stream: UnixStream, shared_clone: Arc<RwLock<ImageDa
                     // println!("img lock acquired parent {}/{}", _c_id.1, _c_id.0);
                     let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs_f64();
                     frame = Vec::new();
-                    frame.extend_from_slice(format!(
-                        "--boundarydonotcross\r\n\
-                        Content-Type: image/jpeg\r\n\
-                        Content-Length: {}\r\n\
-                        X-Timestamp: {:.6}\r\n\r\n",
-                        // img.as_ref().map_or(0, |i| i.len()),
-                        img.len(),
-                        timestamp
-                    ).as_bytes());
+                    // TODO Temporarily incorrect, add proper implementation 
+                    if !advance_headers {
+                        frame.extend_from_slice(format!(
+                            "--boundarydonotcross\r\n\
+                            Content-Type: image/jpeg\r\n\
+                            Content-Length: {}\r\n\
+                            X-Timestamp: {:.6}\r\n\r\n",
+                            // img.as_ref().map_or(0, |i| i.len()),
+                            img.len(),
+                            timestamp
+                        ).as_bytes());
+                    } else {
+                        frame.extend_from_slice(format!(
+                            "--boundarydonotcross\r\n\
+                            Content-Type: image/jpeg\r\n\
+                            Content-Length: {}\r\n\r\n",
+                            img.len(),
+                        ).as_bytes());
+                    }
 
                     // println!("frame header: {}", String::from_utf8(frame.clone()).unwrap());
                     // if let Some(img) = img {
@@ -395,15 +406,25 @@ async fn connection_handler(stream: UnixStream, shared_clone: Arc<RwLock<ImageDa
                             // println!("img lock acquired parent {}/{}", _c_id.1, _c_id.0);
                             let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs_f64();
                             frame = Vec::new();
-                            frame.extend_from_slice(format!(
-                                "--boundarydonotcross\r\n\
-                                Content-Type: image/jpeg\r\n\
-                                Content-Length: {}\r\n\
-                                X-Timestamp: {:.6}\r\n\r\n",
-                                // img.as_ref().map_or(0, |i| i.len()),
-                                img.len(),
-                                timestamp
-                            ).as_bytes());
+                            // TODO Temporarily incorrect, add proper implementation 
+                            if !advance_headers {
+                                frame.extend_from_slice(format!(
+                                    "--boundarydonotcross\r\n\
+                                    Content-Type: image/jpeg\r\n\
+                                    Content-Length: {}\r\n\
+                                    X-Timestamp: {:.6}\r\n\r\n",
+                                    // img.as_ref().map_or(0, |i| i.len()),
+                                    img.len(),
+                                    timestamp
+                                ).as_bytes());
+                            } else {
+                                frame.extend_from_slice(format!(
+                                    "--boundarydonotcross\r\n\
+                                    Content-Type: image/jpeg\r\n\
+                                    Content-Length: {}\r\n",
+                                    img.len(),
+                                ).as_bytes());
+                            }
 
                             // println!("frame header: {}", String::from_utf8(frame.clone()).unwrap());
                             // if let Some(img) = img {
@@ -426,7 +447,7 @@ async fn connection_handler(stream: UnixStream, shared_clone: Arc<RwLock<ImageDa
                 if !skip {
                     df_frame_sent = false;
                     if let Err(e) = writer.write_all(&frame).await {
-                        eprintln!("Failed conneciton, {}", e);
+                        eprintln!("Failed connection, {}", e);
                         break;
                     }
                     if let Err(e) = writer.flush().await {
@@ -464,7 +485,6 @@ async fn connection_handler(stream: UnixStream, shared_clone: Arc<RwLock<ImageDa
                 }
             }
             client_clone.write().await.remove_client_from_header(line.clone());
-
         }  else if line.starts_with("GET /state") {
             let lock = shared_clone.read().await;
             let cframe_num = lock.client_total_frames.load(std::sync::atomic::Ordering::Relaxed);

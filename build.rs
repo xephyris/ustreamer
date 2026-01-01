@@ -8,7 +8,7 @@ fn main() {
     let out_path = PathBuf::from(env::var("OUT_DIR").unwrap());
     if Path::new("/dev/mpp_service").exists() {
         println!("cargo:rustc-cfg=mpp_accel");
-        println!("cargo:rustc-link-lib=rockchip_mpp"); 
+        println!("cargo:rustc-link-lib=dylib=rockchip_mpp"); 
         println!("cargo:rustc-link-search=native={}/mpp/inc", env!("CARGO_MANIFEST_DIR")); 
         let bindings_mpp = bindgen::Builder::default()
             .header(&format!("{}/mpp/wrapper.h", env!("CARGO_MANIFEST_DIR")))

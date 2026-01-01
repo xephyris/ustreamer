@@ -36,7 +36,7 @@ pub fn encode_jpeg(mut raw_buf: Vec<u8>, width: u32, height: u32, quality: u8, f
         mpp_enc_cfg_set_s32(cfg, b"prep:format\0" as *const _ , MppFrameFormat_MPP_FMT_YUV420SP as i32);
         mpp_enc_cfg_set_s32(cfg, b"rc:mode\0" as *const _ , MppEncRcMode_e_MPP_ENC_RC_MODE_FIXQP as i32);
         mpp_enc_cfg_set_s32(cfg, b"jpeg:q_factor\0" as *const _,quality); 
-        mpp_enc_cfg_set_s32(cfg, b"jpeg:qf_max\0" as *const _ , 100);
+        mpp_enc_cfg_set_s32(cfg, b"jpeg:qf_max\0" as *const _ , 99);
         mpp_enc_cfg_set_s32(cfg, b"jpeg:qf_min\0" as *const _, 1);
 
 
@@ -142,8 +142,10 @@ pub fn encode_jpeg(mut raw_buf: Vec<u8>, width: u32, height: u32, quality: u8, f
     }
 }
 
-#[cfg(not(rga_converter))]
-fn convert_to_nv12(mut raw_buf: Vec<u8>, width: u32, height: u32, format: StreamPixelFormat) -> (Vec<u8>, usize){
+
+// TODO Temporarily disabling RGA Conversion as it produces washed out colors
+#[cfg(rga_converter)]
+fn convert_to_nv12_broken(mut raw_buf: Vec<u8>, width: u32, height: u32, format: StreamPixelFormat) -> (Vec<u8>, usize){
     // println!("USING HARDWARE RGA CONVERSION");
     let frame_size;
     match format {
@@ -165,7 +167,7 @@ fn convert_to_nv12(mut raw_buf: Vec<u8>, width: u32, height: u32, format: Stream
     (raw_buf, frame_size)
 }
 
-#[cfg(rga_converter)]
+// #[cfg(not(rga_converter))]
 fn convert_to_nv12(mut raw_buf: Vec<u8>, width: u32, height: u32, format: StreamPixelFormat) -> (Vec<u8>, usize){
     // println!("RGA device missing");
     let frame_size;

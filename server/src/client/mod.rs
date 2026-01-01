@@ -130,7 +130,7 @@ impl ClientDetails {
                 "key": self.key,
             } 
         });
-        println!("json is this {:?}", json.clone());
+        // println!("json is this {:?}", json.clone());
         json
     }
 }
@@ -139,6 +139,7 @@ fn generate_id() -> String {
     uuid::Uuid::new_v4().simple().to_string()[..16].to_string()
 }
 
+#[derive(Debug)]
 pub struct Clients {
     pub queued: u32,
     pub clients: u32,
@@ -237,7 +238,12 @@ fn parse_key_from_header(header: String) -> Option<String> {
         if url.len() < 2 {
             None
         } else {
-            Some(url.get(1).unwrap().clone())
+            let mut key = url.get(1).unwrap_or(&"0".to_string()).clone();
+            if key.contains("&") {
+                let segments: Vec<&str> = key.split("&").collect();
+                key = String::from(segments[0]);
+            }
+            Some(key)
         }
     }
 }
