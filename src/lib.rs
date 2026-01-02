@@ -12,6 +12,7 @@ pub struct Color {
     b: u8,
 }
 
+#[derive(PartialEq, Eq)]
 pub enum StreamPixelFormat {
     NV12,
     BGR3,

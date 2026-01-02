@@ -1,7 +1,8 @@
 use std::time::Instant;
 
 use crate::Color;
-use yuv::{yuv420_to_rgb, yuv_nv12_to_rgb, yuv_nv24_to_rgb, yuyv422_to_rgb, BufferStoreMut, YuvBiPlanarImage, YuvBiPlanarImageMut, YuvConversionMode, YuvPlanarImage, YuvRange, YuvStandardMatrix};
+use pic_scale::{ImageStore, ImageStoreMut, ResamplingFunction, Scaling, ScalingU16};
+use yuv::{BufferStoreMut, YuvBiPlanarImage, YuvBiPlanarImageMut, YuvConversionMode, YuvPlanarImage, YuvRange, YuvStandardMatrix, yuv_nv12_to_rgb, yuv_nv24_to_bgr, yuv_nv24_to_rgb, yuv420_to_rgb, yuyv422_to_rgb};
 
 #[cfg(rga_converter)] 
 pub mod rk_rga;
@@ -108,6 +109,66 @@ pub fn nv24_444_to_nv12(buf: &[u8], width: u32, height: u32) -> Vec<u8> {
     dst
 }
 
+pub fn nv24_444_to_nv12_yuv_resizer(buf: &[u8], width: u32, height: u32) -> Vec<u8> {
+    let mut out_uv: Vec<u16> = vec![0; (width * height) as usize / 2];
+    let mut out_buf = Vec::with_capacity((width * height) as usize * 3 / 2);
+    out_buf.extend_from_slice(&buf[..(width * height) as usize]);
+    let image_store = ImageStore{
+        buffer: std::borrow::Cow::Borrowed(u8_slice_as_u16(&buf[(width * height) as usize ..])),
+        channels: 2,
+        width: width as usize,
+        height: height as usize,
+        stride: (width * 2) as usize,
+        bit_depth: 10,
+    };
+    let mut image_store_out = ImageStoreMut { 
+        buffer: pic_scale::BufferStore::Borrowed(&mut out_uv), 
+        channels: 2, 
+        width: (width) as usize, 
+        height: (height / 2) as usize, 
+        stride: (width) as usize, 
+        bit_depth: 10,
+    };
+    // let now = Instant::now();
+    let mut resizer = pic_scale::Scaler::new(ResamplingFunction::Box);
+    resizer.set_workload_strategy(pic_scale::WorkloadStrategy::PreferSpeed);
+    resizer.set_threading_policy(pic_scale::ThreadingPolicy::Adaptive);
+    resizer.resize_plane_u16(&image_store, &mut image_store_out).expect("Resize failed");
+    // println!("RESIZER TOOK {} MS to resize", now.elapsed().as_millis());
+
+    // let out_uv_u8: &[u8] = unsafe {
+    //     std::slice::from_raw_parts(out_uv.as_ptr() as *const u8, out_uv.len())
+    // };
+
+    let mut out_uv_fixed = Vec::with_capacity(out_uv.len() * 2);
+    out_buf.extend_from_slice(&out_uv_fixed);
+    // out_buf.extend_from_slice(out_uv_u8);
+    
+    out_buf
+}
+
+fn u8_slice_as_u16(slice: &[u8]) -> &[u16] {
+    assert!(slice.len() % 2 == 0);
+    unsafe { std::slice::from_raw_parts(slice.as_ptr() as *const u16, slice.len()) }
+}
+
+pub fn nv24_444_to_bgr(buf: &[u8], width: usize, height: usize) -> Vec<u8> {
+    let wu32 = width as u32;
+    let hu32 = height as u32;
+    let biplanar = YuvBiPlanarImage{
+        y_plane: &buf[..width * height], 
+        y_stride: wu32, 
+        uv_plane: &buf[width * height .. ], 
+        uv_stride: wu32 * 2, 
+        width: wu32, 
+        height: hu32 };
+    assert_eq!(buf.len(), ((width * height) * 3) as usize);
+    let mut bgr_buf = Vec::new();
+    bgr_buf.resize(width * 3 * height, 0);
+    yuv_nv24_to_bgr(&biplanar, &mut bgr_buf, width as u32 * 3, YuvRange::Full, YuvStandardMatrix::Bt709, YuvConversionMode::Fast).expect("Failed to convert NV24 buffer to BGR");
+    bgr_buf
+}
+
 pub fn nv24_to_rgb_yuv(buf: &[u8], width: usize, height: usize, rgb_buf: &mut Vec<u8>) {
     let wu32 = width as u32;
     let hu32 = height as u32;
@@ -118,7 +179,7 @@ pub fn nv24_to_rgb_yuv(buf: &[u8], width: usize, height: usize, rgb_buf: &mut Ve
         uv_stride: wu32 * 2, 
         width: wu32, 
         height: hu32 };
-    assert_eq!(buf.len(), ((width * height) * 15 / 10) as usize);
+    assert_eq!(buf.len(), ((width * height) * 3) as usize);
     yuv_nv24_to_rgb(&biplanar, rgb_buf, width as u32 * 3, YuvRange::Full, YuvStandardMatrix::Bt709, YuvConversionMode::Fast).unwrap();
 }
 
