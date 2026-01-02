@@ -145,7 +145,7 @@ pub fn encode_jpeg(mut raw_buf: Vec<u8>, width: u32, height: u32, quality: u8, f
 
 // TODO Temporarily disabling RGA Conversion as it produces washed out colors
 #[cfg(rga_converter)]
-fn convert_to_nv12_broken(mut raw_buf: Vec<u8>, width: u32, height: u32, format: StreamPixelFormat) -> (Vec<u8>, usize){
+fn convert_to_nv12(mut raw_buf: Vec<u8>, width: u32, height: u32, format: StreamPixelFormat) -> (Vec<u8>, usize){
     // println!("USING HARDWARE RGA CONVERSION");
     let frame_size;
     match format {
@@ -167,7 +167,7 @@ fn convert_to_nv12_broken(mut raw_buf: Vec<u8>, width: u32, height: u32, format:
     (raw_buf, frame_size)
 }
 
-// #[cfg(not(rga_converter))]
+#[cfg(not(rga_converter))]
 fn convert_to_nv12(mut raw_buf: Vec<u8>, width: u32, height: u32, format: StreamPixelFormat) -> (Vec<u8>, usize){
     // println!("RGA device missing");
     let frame_size;
