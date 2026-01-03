@@ -4,6 +4,7 @@ use turbojpeg::compress;
 use turbojpeg::image::ImageBuffer;
 use turbojpeg::Image;
 use turbojpeg::Subsamp;
+use ustreamer::Encoder;
 use ustreamer::bind_socket;
 
 use ustreamer::lock::StreamLock;
@@ -46,12 +47,20 @@ use ustreamer::rk_mpp;
 // set CPATH when building: 
 // export CPATH="/usr/include:/usr/include/aarch64-linux-gnu"
 // FFMPEG Recording :  ffmpeg -f v4l2 -pixel_format nv12 -video_size 1920x1080 -i /dev/video0        -c:v mjpeg -pix_fmt yuvj422p -f avi output1.avi
+
+const ENCODER: Encoder = Encoder::RockchipMpp; 
+
 #[tokio::main]
 async fn main() {
+
+    #[cfg(mpp_accel)]
+    let encoder_fn: fn(PlaneMapping, usize, usize, &str, u8) -> Vec<u8> = if ENCODER == Encoder::RockchipMpp { encode_jpeg_mpp } else if ENCODER == Encoder::CpuPool { encode_jpeg_cpu_pool } else { encode_jpeg_cpu };
+    #[cfg(not(mpp_accel))]
+    let encoder_fn: fn(PlaneMapping, usize, usize, &str, u8) -> Vec<u8> = if ENCODER == Encoder::CpuPool { encode_jpeg_cpu_pool } else { encode_jpeg_cpu };
     let embedded = false;
 
     let downscaling = false;
-    let skip_repeats = false;
+    let skip_repeats = true;
 
     let shared = Arc::new(RwLock::new(ImageData::new())); 
     let shared_image_clone = shared.clone();
@@ -258,7 +267,7 @@ async fn main() {
                 lock.skip = true;
             }
             
-            let mut jpeg_data = encode_jpeg(data, width, height, &pixelformat, 80);
+            let mut jpeg_data = encoder_fn(data, width, height, &pixelformat, 80);
             let mut lock = shared_image_clone.write().await;
             let metadata = format!("{width}x{height}x{pixelformat}x{encoder}x{fps}x{total_frames}");
             lock.frame = Some(jpeg_data.clone());
@@ -326,9 +335,11 @@ async fn main() {
             } 
 
             if height > 1920 {
-                std::thread::sleep(Duration::from_millis(10));
-            } else {
+                #[cfg(mpp_accel)]
                 std::thread::sleep(Duration::from_millis(30));
+            } else {
+                #[cfg(mpp_accel)]
+                std::thread::sleep(Duration::from_millis(50_u64.saturating_sub(frame_time.elapsed().as_millis() as u64)));
             }
 
             total_frames += 1;
@@ -339,7 +350,7 @@ async fn main() {
 }
 
 #[cfg(mpp_accel)]
-fn encode_jpeg(data: PlaneMapping, width:usize, height: usize, pixelformat: &str, quality: u8) -> Vec<u8> {
+fn encode_jpeg_mpp(data: PlaneMapping, width:usize, height: usize, pixelformat: &str, quality: u8) -> Vec<u8> {
     let mut jpeg_data = Vec::new();
 
     // let processing = Instant::now();
@@ -360,19 +371,16 @@ fn encode_jpeg(data: PlaneMapping, width:usize, height: usize, pixelformat: &str
     jpeg_data
 }
 
-#[cfg(not(mpp_accel))]
-fn encode_jpeg(data: PlaneMapping, width:usize, height: usize, pixelformat: &str, quality: u8) -> Vec<u8> {
-    use turbojpeg::OwnedBuf;
 
-    println!("Using CPU for encoding");
+fn encode_jpeg_cpu(data: PlaneMapping, width:usize, height: usize, pixelformat: &str, quality: u8) -> Vec<u8> {
+    // println!("Using CPU for encoding");
     let mut jpeg_data = Vec::new();
     let raw = data.data.to_vec();
     if pixelformat == "NV12" {
         let mut rgb_buf = vec![0u8; (width * height * 3) as usize];
         ustreamer::converters::nv12_to_rgb_yuv(&data, width, height, &mut rgb_buf);
-
         let image = Image{ 
-            pixels: raw.as_slice(), 
+            pixels: rgb_buf.as_slice(), 
             width: width, 
             pitch: width * 3, 
             height: height, 
@@ -410,9 +418,8 @@ fn encode_jpeg(data: PlaneMapping, width:usize, height: usize, pixelformat: &str
         // std::fs::write("nv24.raw", data.data.to_vec()).unwrap();
         let mut rgb_buf = vec![0u8; (width * height * 3) as usize];
         ustreamer::converters::nv24_to_rgb_yuv(&data, width, height, &mut rgb_buf);
-
         let image = Image{ 
-            pixels: raw.as_slice(), 
+            pixels: rgb_buf.as_slice(), 
             width: width, 
             pitch: width * 3, 
             height: height, 
@@ -434,6 +441,38 @@ fn encode_jpeg(data: PlaneMapping, width:usize, height: usize, pixelformat: &str
         };  
 
         jpeg_data = compress(image, 80, Subsamp::Sub2x2).unwrap().to_vec();
+    }
+
+    if pixelformat == "MJPG" {
+        jpeg_data = raw;
+    }
+    jpeg_data
+}
+
+fn encode_jpeg_cpu_pool(data: PlaneMapping, width:usize, height: usize, pixelformat: &str, quality: u8) -> Vec<u8> {
+    // println!("Using CPU for encoding");
+    let mut jpeg_data = Vec::new();
+    let raw = data.data.to_vec();
+    if pixelformat == "NV12" {
+        let mut rgb_buf = vec![0u8; (width * height * 3) as usize];
+        ustreamer::converters::nv12_to_rgb_yuv(&data, width, height, &mut rgb_buf);
+        jpeg_data = ustreamer::cpu_pool::encode_jpeg_pool(&rgb_buf, width, height, false, quality)
+    }
+    
+    if pixelformat == "BGR3" {
+         jpeg_data = ustreamer::cpu_pool::encode_jpeg_pool(&raw, width, height, true, quality)
+    }
+
+    if pixelformat == "NV24" {
+        // std::fs::write("nv24.raw", data.data.to_vec()).unwrap();
+        let mut rgb_buf = vec![0u8; (width * height * 3) as usize];
+        ustreamer::converters::nv24_to_rgb_yuv(&data, width, height, &mut rgb_buf);
+        jpeg_data = ustreamer::cpu_pool::encode_jpeg_pool(&rgb_buf, width, height, false, quality)
+    }
+
+    if pixelformat == "YUYV" {
+        let rgb_buf = ustreamer::converters::yuyv_to_rgb_yuv(&data, width as u32, height as u32);
+         jpeg_data = ustreamer::cpu_pool::encode_jpeg_pool(&rgb_buf, width, height, false, quality)
     }
 
     if pixelformat == "MJPG" {

@@ -3,6 +3,7 @@ pub mod server;
 pub mod lock;
 #[cfg(mpp_accel)] 
 pub mod rk_mpp;
+pub mod cpu_pool;
 pub mod error;
 
 
@@ -17,6 +18,24 @@ pub enum StreamPixelFormat {
     NV12,
     BGR3,
     NV24,
+}
+
+#[derive(PartialEq, Eq)]
+pub enum Encoder {
+    #[cfg(mpp_accel)]
+    RockchipMpp,
+    CpuPool,
+    Cpu,
+}
+
+impl ToString for Encoder {
+    fn to_string(&self) -> String {
+        match self {
+            Encoder::RockchipMpp => "rockchip mpp".to_string(),
+            Encoder::CpuPool => "cpu pool".to_string(),
+            Encoder::Cpu => "cpu".to_string(),
+        }
+    }
 }
 
 use resize::Pixel::RGB8;
