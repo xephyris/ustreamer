@@ -150,10 +150,8 @@ fn convert_to_nv12(mut raw_buf: Vec<u8>, width: u32, height: u32, format: Stream
     let frame_size;
     match format {
         StreamPixelFormat::NV24 => {
-            // raw_buf = crate::converters::nv24_444_to_nv12(&raw_buf, width, height);
-            // raw_buf = crate::converters::nv24_444_to_bgr(&raw_buf, width as usize, height as usize);
-            raw_buf = crate::converters::bgr3_888_to_nv12(&raw_buf, width as usize, height as usize);
-            raw_buf = rk_rga::bgr_to_nv12(raw_buf, width, height);
+            use crate::converters::downsampler::Mode;
+            raw_buf = crate::converters::downsampler::nv24_444_to_nv12_downsampler(&raw_buf, width as usize, height as usize, Mode::Fast);
             frame_size = (width * ((height + 15) & !15) * 3 / 2) as usize;
             raw_buf.resize(frame_size, 0);
         },
@@ -176,7 +174,8 @@ fn convert_to_nv12(mut raw_buf: Vec<u8>, width: u32, height: u32, format: Stream
     let frame_size;
     match format {
         StreamPixelFormat::NV24 => {
-            raw_buf = crate::converters::nv24_444_to_nv12(&raw_buf, width, height);
+            use crate::converters::downsampler::Mode;
+            raw_buf = crate::converters::downsampler::nv24_444_to_nv12_downsampler(&raw_buf, width as usize, height as usize, Mode::Fast);
             frame_size = (width * ((height + 15) & !15) * 3 / 2) as usize;
             raw_buf.resize(frame_size, 0);
         },

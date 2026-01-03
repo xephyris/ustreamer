@@ -1,11 +1,11 @@
 use std::time::Instant;
 
 use crate::Color;
-use pic_scale::{ImageStore, ImageStoreMut, ResamplingFunction, Scaling, ScalingU16};
 use yuv::{BufferStoreMut, YuvBiPlanarImage, YuvBiPlanarImageMut, YuvConversionMode, YuvPlanarImage, YuvRange, YuvStandardMatrix, yuv_nv12_to_rgb, yuv_nv24_to_bgr, yuv_nv24_to_rgb, yuv420_to_rgb, yuyv422_to_rgb};
 
 #[cfg(rga_converter)] 
 pub mod rk_rga;
+pub mod downsampler;
 
 pub fn yuyv_to_rgb(y: i32, u:i32, v: i32) -> (u8, u8, u8){
     let y = y - 16;
@@ -107,49 +107,6 @@ pub fn nv24_444_to_nv12(buf: &[u8], width: u32, height: u32) -> Vec<u8> {
     dst[y_size as usize..].copy_from_slice(&dst_uv);
     // println!("conversion time: {}", start.elapsed().as_millis());
     dst
-}
-
-pub fn nv24_444_to_nv12_yuv_resizer(buf: &[u8], width: u32, height: u32) -> Vec<u8> {
-    let mut out_uv: Vec<u16> = vec![0; (width * height) as usize / 2];
-    let mut out_buf = Vec::with_capacity((width * height) as usize * 3 / 2);
-    out_buf.extend_from_slice(&buf[..(width * height) as usize]);
-    let image_store = ImageStore{
-        buffer: std::borrow::Cow::Borrowed(u8_slice_as_u16(&buf[(width * height) as usize ..])),
-        channels: 2,
-        width: width as usize,
-        height: height as usize,
-        stride: (width * 2) as usize,
-        bit_depth: 10,
-    };
-    let mut image_store_out = ImageStoreMut { 
-        buffer: pic_scale::BufferStore::Borrowed(&mut out_uv), 
-        channels: 2, 
-        width: (width) as usize, 
-        height: (height / 2) as usize, 
-        stride: (width) as usize, 
-        bit_depth: 10,
-    };
-    // let now = Instant::now();
-    let mut resizer = pic_scale::Scaler::new(ResamplingFunction::Box);
-    resizer.set_workload_strategy(pic_scale::WorkloadStrategy::PreferSpeed);
-    resizer.set_threading_policy(pic_scale::ThreadingPolicy::Adaptive);
-    resizer.resize_plane_u16(&image_store, &mut image_store_out).expect("Resize failed");
-    // println!("RESIZER TOOK {} MS to resize", now.elapsed().as_millis());
-
-    // let out_uv_u8: &[u8] = unsafe {
-    //     std::slice::from_raw_parts(out_uv.as_ptr() as *const u8, out_uv.len())
-    // };
-
-    let mut out_uv_fixed = Vec::with_capacity(out_uv.len() * 2);
-    out_buf.extend_from_slice(&out_uv_fixed);
-    // out_buf.extend_from_slice(out_uv_u8);
-    
-    out_buf
-}
-
-fn u8_slice_as_u16(slice: &[u8]) -> &[u16] {
-    assert!(slice.len() % 2 == 0);
-    unsafe { std::slice::from_raw_parts(slice.as_ptr() as *const u16, slice.len()) }
 }
 
 pub fn nv24_444_to_bgr(buf: &[u8], width: usize, height: usize) -> Vec<u8> {
