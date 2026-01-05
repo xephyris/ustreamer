@@ -1,5 +1,6 @@
 
 
+use clap::Parser;
 use turbojpeg::compress;
 use turbojpeg::image::ImageBuffer;
 use turbojpeg::Image;
@@ -7,6 +8,7 @@ use turbojpeg::Subsamp;
 use ustreamer::Encoder;
 use ustreamer::bind_socket;
 
+use ustreamer::config::Args;
 use ustreamer::lock::StreamLock;
 use ustreamer::server;
 use ustreamer::server::img::ImageData;
@@ -52,6 +54,31 @@ const ENCODER: Encoder = Encoder::RockchipMpp;
 
 #[tokio::main]
 async fn main() {
+    let args = Args::parse();
+
+    if args.show_version {
+        println!("v0.1.0");
+    } else if args.features {
+        println!("- WITH_GPIO");
+        println!("- WITH_SYSTEMD");
+        println!("- WITH_PTHREAD_NP");
+        println!("- WITH_SETPROCTITLE");
+        println!("- HAS PDEATHSIG");
+    } else {
+        image_server(args.device, args.drop_frames).await;
+    }
+    
+}
+
+async fn image_server(mut path: String, skip: bool) {
+    if !path.contains("dev") {
+        path = "/dev/video0".to_string();
+    }
+
+    let _lock = StreamLock::aquire_lock("/run/kvmd/ustreamer.lock".to_string());
+    
+    
+    let buffer_count = if ENCODER == Encoder::RockchipMpp { 1 } else { 4 };
 
     #[cfg(mpp_accel)]
     let encoder_fn: fn(PlaneMapping, usize, usize, &str, u8) -> Vec<u8> = if ENCODER == Encoder::RockchipMpp { encode_jpeg_mpp } else if ENCODER == Encoder::CpuPool { encode_jpeg_cpu_pool } else { encode_jpeg_cpu };
@@ -77,7 +104,7 @@ async fn main() {
         server_started = true;
     }
 
-    let dev = Device::open(&Path::new("/dev/video0"), DeviceConfig::new()).map_err(|e| panic!("Failed to open device with error: {e}")).unwrap();
+    let dev = Device::open(&Path::new(&path), DeviceConfig::new()).map_err(|e| panic!("Failed to open device with error: {e}")).unwrap();
 
     let file = dev.as_raw_fd();
     let filefd = dev.as_fd();
@@ -490,12 +517,6 @@ fn init_axum_server(port: u32, shared: Arc<RwLock<ImageData>>) {
     });
 }
 
-#[cfg(mpp_accel)]
 fn get_encoder() -> String {
-    String::from("rockchip mpp")
-}
-
-#[cfg(not(mpp_accel))]
-fn get_encoder() -> String {
-    String::from("cpu")
+    ENCODER.to_string()
 }

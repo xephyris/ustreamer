@@ -5,6 +5,7 @@ pub mod lock;
 pub mod rk_mpp;
 pub mod cpu_pool;
 pub mod error;
+pub mod config;
 
 
 pub struct Color {
@@ -22,7 +23,6 @@ pub enum StreamPixelFormat {
 
 #[derive(PartialEq, Eq)]
 pub enum Encoder {
-    #[cfg(mpp_accel)]
     RockchipMpp,
     CpuPool,
     Cpu,

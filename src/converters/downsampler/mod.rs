@@ -64,7 +64,6 @@ fn downsample_row(row0: &[u8], row1: &[u8], dst: &mut [u8], width: usize) {
 }
 
 fn fastest_downsample_row(row0: &[u8], row1: &[u8], dst: &mut [u8], width: usize) {
-    let stride = width * 2;
     let mut px = 0; // pixel index
 
     while px < width {
