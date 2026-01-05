@@ -11,8 +11,6 @@ pub fn encode_jpeg(mut raw_buf: Vec<u8>, width: u32, height: u32, quality: u8, f
 
     let width = width as i32;
     let height = height as i32;
-    let aligned_h = (height + 15) & !15;  // round up to multiple of 16
-    let aligned_w = (width + 15) & !15;
     let quality = quality as i32;
     
     // println!("Set Quality Configs");
