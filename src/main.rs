@@ -32,11 +32,13 @@ use tokio::sync::RwLock;
 use ustreamer::rk_mpp;
 
 // COMPLETE Integrate server and client
+// TODO Integrate features with pikvm API (fps, dual-final frames, etc)
 // TODO Improve Frame retention between image server and web server 
 // * (reduce lost frames from when sync between image server + web server is disrupted)
 // ? (Send Arc<RwLock<Vec<u8>>> to axum server on initialization)
-// TODO Integrate features with pikvm API (fps, dual-final frames, etc)
 // TODO Implement support for single planar formats & native mjpeg
+
+// TODO Update deps (libc 0.2.179 breaks rga bindings)
 // ? Separate rk_mpp and rga to new project?
 
 // Install deps
@@ -50,7 +52,7 @@ use ustreamer::rk_mpp;
 // export CPATH="/usr/include:/usr/include/aarch64-linux-gnu"
 // FFMPEG Recording :  ffmpeg -f v4l2 -pixel_format nv12 -video_size 1920x1080 -i /dev/video0        -c:v mjpeg -pix_fmt yuvj422p -f avi output1.avi
 
-const ENCODER: Encoder = Encoder::RockchipMpp; 
+const ENCODER: Encoder = Encoder::CpuPool; 
 
 #[tokio::main]
 async fn main() {
@@ -65,6 +67,9 @@ async fn main() {
         println!("- WITH_SETPROCTITLE");
         println!("- HAS PDEATHSIG");
     } else {
+        if args.exit_on_parent_death {
+            unsafe { exit_on_parent_death() };
+        }
         image_server(args.device, args.drop_frames).await;
     }
     
@@ -78,7 +83,7 @@ async fn image_server(mut path: String, skip: bool) {
     let _lock = StreamLock::aquire_lock("/run/kvmd/ustreamer.lock".to_string());
     
     
-    let buffer_count = if ENCODER == Encoder::RockchipMpp { 1 } else { 4 };
+    let buffer_count = if ENCODER == Encoder::RockchipMpp { 1 } else { 8 };
 
     #[cfg(mpp_accel)]
     let encoder_fn: fn(PlaneMapping, usize, usize, &str, u8) -> Vec<u8> = if ENCODER == Encoder::RockchipMpp { encode_jpeg_mpp } else if ENCODER == Encoder::CpuPool { ustreamer::cpu_pool::init_pool(); encode_jpeg_cpu_pool } else { encode_jpeg_cpu };
@@ -215,7 +220,7 @@ async fn image_server(mut path: String, skip: bool) {
                         println!("No connections in last second");
                         last_check = Instant::now();
                     }
-                    std::thread::sleep(Duration::from_millis(100)); 
+                    std::thread::sleep(Duration::from_millis(50)); 
                 },
                 Err(e) => {
                     eprintln!("Connection failed: {}", e);
@@ -530,4 +535,19 @@ fn init_axum_server(port: u32, shared: Arc<RwLock<ImageData>>) {
 
 fn get_encoder() -> String {
     ENCODER.to_string()
+}
+
+#[cfg(target_os="linux")]
+unsafe fn exit_on_parent_death() {
+    use libc::{prctl, PR_SET_PDEATHSIG, SIGTERM, c_int};
+    unsafe { prctl(PR_SET_PDEATHSIG, SIGTERM as c_int, 0, 0, 0) };
+
+    if unsafe { libc::getppid() } == 1 { 
+        std::process::exit(1); 
+    }
+}
+
+#[cfg(not(target_os="linux"))]
+fn exit_on_parent_death() {
+    panic!("Exit on parent death is only supported on linux platforms");
 }

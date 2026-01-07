@@ -15,4 +15,7 @@ pub struct Args {
 
     #[arg(short = 'e', long = "drop-same-frames")]
     pub drop_frames: bool,
+
+    #[arg(long = "exit-on-parent-death")]
+    pub exit_on_parent_death: bool,
 }
