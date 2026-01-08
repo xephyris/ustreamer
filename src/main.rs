@@ -228,7 +228,7 @@ async fn image_server(mut path: String, skip: bool) {
             }
             println!("looking for client");
         } else {
-            if start.elapsed().as_secs() > 1 {
+            if start.elapsed().as_millis() > 1000 {
                 println!("FPS: {} REPEATED FRAMES: {}", frames, rframes);
                 println!("Total Frames: {}", total_frames);
                 println!("Image SERVER Frame TIME {}", avg_frame_time);
@@ -274,7 +274,6 @@ async fn image_server(mut path: String, skip: bool) {
             if skip_repeats && embedded{
                 if data.data == last_buf.as_slice() && frames % 3 == 0{
                     same += 1;
-                    frames += 1;
                     // println!("REPEATED FRAMES FOUND!!!");
                     rframes += 1;
                     let mut lock = shared_image_clone.write().await;
@@ -286,8 +285,7 @@ async fn image_server(mut path: String, skip: bool) {
                 }
             } else if skip_repeats{
                 if data.data == last_buf.as_slice() && frames % 3 == 0 {
-                    same += 1;
-                    frames += 1; 
+                    same += 1; 
                     println!("REPEATED FRAMES FOUND!!!");
                     rframes += 1;
                     server_skip = 1; // For External Server Use;
