@@ -4,6 +4,8 @@ use std::sync::{OnceLock, Mutex};
 use std::sync::atomic::{AtomicU32, Ordering};
 use turbojpeg::{Image, Subsamp, compress};
 
+use rayon::ThreadPoolBuilder; 
+
 static CPU_TX: OnceLock<Sender<(u32, Vec<u8>, usize, usize, bool, u8)>> = OnceLock::new();
 static CPU_RX: OnceLock<Receiver<(Vec<u8>, u32)>> = OnceLock::new();
 
@@ -17,34 +19,50 @@ static MAX_WORKERS: OnceLock<usize> = OnceLock::new();
 pub fn init_pool() {
     let workers = num_cpus::get();
     MAX_WORKERS.set(workers).ok();
+    println!("WORKERS {workers}");
+    let pool = ThreadPoolBuilder::new()
+        .num_threads(workers)
+        .build()
+        .unwrap();
 
     let (tx, rx) = bounded::<(u32, Vec<u8>, usize, usize, bool, u8)>(workers);
     let (tx_out, rx_out) = unbounded::<(Vec<u8>, u32)>();
 
-    for _ in 0..workers {
-        let rx = rx.clone();
-        let tx_out = tx_out.clone();
+    pool.spawn(move || {
+        rayon::scope(|s| {
+            while let Ok((index, data, w, h, format_bgr, quality)) = rx.recv() {
+            
+                let out_tx = tx_out.clone();
 
-        std::thread::spawn(move || {
-            for (index, data, w, h, format_bgr, quality) in rx.iter() {
-                let image = Image {
-                    pixels: data.as_slice(),
-                    width: w,
-                    height: h,
-                    pitch: w * 3,
-                    format: if format_bgr {
-                        turbojpeg::PixelFormat::BGR
-                    } else {
-                        turbojpeg::PixelFormat::RGB
-                    },
-                };
+                s.spawn(move |_| {
+                    let time = std::time::Instant::now();
+                    
+                    let image = turbojpeg::Image {
+                        pixels: data.as_slice(),
+                        width: w,
+                        height: h,
+                        pitch: w * 3,
+                        format: if format_bgr {
+                            turbojpeg::PixelFormat::BGR
+                        } else {
+                            turbojpeg::PixelFormat::RGB
+                        },
+                    };
 
-                let jpeg_data = compress(image, quality as i32, Subsamp::Sub2x2).unwrap().to_vec();
-
-                tx_out.send((jpeg_data, index)).ok();
+                    let jpeg_data = turbojpeg::compress(
+                        image,
+                        quality as i32,
+                        turbojpeg::Subsamp::Sub2x2,
+                    )
+                    .unwrap()
+                    .to_vec();
+                    // println!("TIME ENCODING {}", time.elapsed().as_millis());
+                    let _ = out_tx.send((jpeg_data, index));
+                })
             }
-        });
-    }
+
+        })
+    });
 
     CPU_TX.set(tx).ok();
     CPU_RX.set(rx_out).ok();
@@ -55,7 +73,7 @@ pub fn init_pool() {
 
 // TODO Fix possible overflow of index
 pub fn encode_jpeg_pool(
-    data: &[u8],
+    data: Vec<u8>,
     width: usize,
     height: usize,
     format_bgr: bool,
@@ -75,7 +93,7 @@ pub fn encode_jpeg_pool(
    if !data.is_empty() && *busy < max_workers {
         let index = NEXT.fetch_add(1, Ordering::Relaxed);
 
-        tx.send((index, data.to_vec(), width, height, format_bgr, quality))
+        tx.send((index, data, width, height, format_bgr, quality))
             .unwrap();
 
         *busy += 1;

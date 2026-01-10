@@ -4,21 +4,22 @@ pub fn nv24_444_to_nv12_downsampler(raw_buf: &[u8], width: usize, height: usize,
     assert!(
         raw_buf.len() % height == 0,
     );
-
+    // let time = std::time::Instant::now();
     let stride = width * 2; 
     assert_eq!(stride, raw_buf.len() / height - width, "Stride mismatch");
 
     let uv_plane = &raw_buf[(width * height) ..];
 
-    let mut out = vec![0u8; width * height / 2];
+    let mut out_buf = vec![0u8; width * height * 3 / 2]; 
+    let (y_dst, out) = out_buf.split_at_mut(width * height); 
+    
     match mode {
         Mode::Fast => {
             for y in (0..height).step_by(2) {
                 let row0 = &uv_plane[ y * stride .. (y + 1) * stride];
                 let row1 = &uv_plane[ (y + 1) * stride .. (y + 2) * stride];
-
                 let dst_row = &mut out[(y / 2) * width .. (y / 2 + 1) * width];
-                fastest_downsample_row(row0, row1, dst_row, width);
+                fastest_downsample_row(row0, dst_row, width) ;
                 
             }
         }
@@ -32,11 +33,8 @@ pub fn nv24_444_to_nv12_downsampler(raw_buf: &[u8], width: usize, height: usize,
             }
         }
     }
-
-
-    let mut out_buf = Vec::with_capacity(width * height * 3/2);
-    out_buf.extend_from_slice(&raw_buf[.. width * height]);
-    out_buf.extend_from_slice(&out);
+    y_dst.copy_from_slice(&raw_buf[.. width * height]); 
+    // println!("Conv time {}", time.elapsed().as_millis());
     out_buf
 }
 
@@ -63,17 +61,23 @@ fn downsample_row(row0: &[u8], row1: &[u8], dst: &mut [u8], width: usize) {
     }
 }
 
-fn fastest_downsample_row(row0: &[u8], row1: &[u8], dst: &mut [u8], width: usize) {
-    let mut px = 0; // pixel index
+fn fast_downsample_row(row0: &[u8], row1: &[u8], dst: &mut [u8], width: usize) {
+    let mut px = 0usize; // pixel index
 
     while px < width {
-        let index = px * 2;
+        dst[px] = row0[px * 2];
+        dst[px + 1] = row1[px * 2 + 3];
 
-        let u_avg = row0[index];
-        let v_avg = row1[index + 3];
+        px += 2;
+    }
+}
 
-        dst[px] = u_avg;
-        dst[px + 1] = v_avg;
+fn fastest_downsample_row(row0: &[u8], dst: &mut [u8], width: usize) {
+    let mut px = 0usize; // pixel index
+
+    while px < width {
+        dst[px] = row0[px * 2];
+        dst[px + 1] = row0[px * 2 + 1];
 
         px += 2;
     }

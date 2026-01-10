@@ -1,6 +1,9 @@
 use std::ffi::c_void;
 
-include!(concat!(env!("OUT_DIR"), "/rga/bindings.rs"));
+include!(concat!(env!("CARGO_MANIFEST_DIR"), "/rga/bindings.rs"));
+
+// rust-analyzer chokes when using OUT-DIR, but it compiles https://github.com/rust-lang/rust-analyzer/issues/20129
+// include!(concat!(env!("OUT_DIR"), "/rga/bindings.rs"));
 
 pub fn bgr_to_nv12(mut raw_buf: Vec<u8>, width: u32, height: u32) -> Vec<u8> {
     let raw_buf_ptr =  raw_buf.as_mut_ptr();

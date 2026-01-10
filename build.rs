@@ -1,8 +1,10 @@
+
 use std::env;
 use std::path::{Path, PathBuf};
 
 #[cfg(feature = "rk_hw_accel")]
 fn main() {
+    println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rustc-check-cfg=cfg(mpp_accel)");
     println!("cargo:rustc-check-cfg=cfg(rga_converter)");
     let out_path = PathBuf::from(env::var("OUT_DIR").unwrap());
@@ -24,11 +26,11 @@ fn main() {
             .expect("Unable to generate bindings");
 
        
-        let bindings_dir = out_path.join(&format!("{}/mpp", env!("CARGO_MANIFEST_DIR")));
+        let bindings_dir = out_path.join("mpp");
         std::fs::create_dir_all(&bindings_dir).expect("Failed to create output directory");
 
         bindings_mpp
-            .write_to_file(out_path.join(&format!("{}/mpp/bindings.rs", env!("CARGO_MANIFEST_DIR"))))
+            .write_to_file(out_path.join("mpp/bindings.rs"))
             .expect("Couldn't write bindings!");
     }
     if Path::new("/dev/rga").exists() {
@@ -45,11 +47,11 @@ fn main() {
             .generate()
             .expect("Unable to generate bindings");
 
-        let bindings_dir = out_path.join(&format!("{}/rga", env!("CARGO_MANIFEST_DIR")));
+        let bindings_dir = out_path.join("rga");
         std::fs::create_dir_all(&bindings_dir).expect("Failed to create output directory"); 
 
         bindings_rga
-            .write_to_file(out_path.join(&format!("{}/rga/bindings.rs", env!("CARGO_MANIFEST_DIR"))))
+            .write_to_file(out_path.join("rga/bindings.rs"))
             .expect("Couldn't write bindings!");
     }
 }

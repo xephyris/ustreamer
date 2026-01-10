@@ -31,7 +31,7 @@ impl ImgStream {
                 let mut state_guard = state.write().await;
                 state_guard.counter += 1;
                 
-                tokio::time::sleep(Duration::from_millis(20)).await;
+                // tokio::time::sleep(Duration::from_millis(20)).await;
                 let mut socket_guard = state_guard.socket.write().await;
                 let mut open_socket = BufReader::new(&mut *socket_guard);
                 let mut len_buf = [0u8; 8];

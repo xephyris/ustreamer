@@ -1,4 +1,7 @@
-include!(concat!(env!("OUT_DIR"), "/mpp/bindings.rs"));
+include!(concat!(env!("CARGO_MANIFEST_DIR"), "/mpp/bindings.rs"));
+
+// rust-analyzer chokes when using OUT-DIR, but it compiles https://github.com/rust-lang/rust-analyzer/issues/20129
+// include!(concat!(env!("OUT_DIR"), "/mpp/bindings.rs"));
 
 #[cfg(rga_converter)]
 use crate::converters::rk_rga;
@@ -6,9 +9,8 @@ use crate::converters::rk_rga;
 use crate::StreamPixelFormat;
 
 pub fn encode_jpeg(mut raw_buf: Vec<u8>, width: u32, height: u32, quality: u8, format: StreamPixelFormat) -> Option<Vec<u8>> {
-
     let (mut raw_buf, frame_size) = convert_to_nv12(raw_buf, width, height, format);
-
+    
     let width = width as i32;
     let height = height as i32;
     let quality = quality as i32;
@@ -63,7 +65,7 @@ pub fn encode_jpeg(mut raw_buf: Vec<u8>, width: u32, height: u32, quality: u8, f
         if ret != 0 || input_buf.is_null() {
             panic!("Failed to get MPP buffer");
         }
-
+        
         // println!("INPUT BUF: {:?}", input_buf);
         // let buf_size = unsafe { mpp_buffer_get_size_with_caller(input_buf, b"main\0".as_ptr()) } as usize; println!("buf_size = {}", buf_size); 
         // let buf_ptr = mpp_buffer_get_ptr_with_caller(input_buf, b"main\0".as_ptr()) as *mut u8;
@@ -95,11 +97,12 @@ pub fn encode_jpeg(mut raw_buf: Vec<u8>, width: u32, height: u32, quality: u8, f
         mpp_frame_set_fmt(frame, MppFrameFormat_MPP_FMT_YUV420SP);
         mpp_frame_set_pts(frame, 0);
         mpp_frame_set_buffer(frame, input_buf);
-
+    
         if frame.is_null() || ctx.is_null() || mpi.is_null() {
             panic!("Null frame");
 
         }
+        // let time = std::time::Instant::now();
         if let Some(encode_fn) = (*mpi).encode_put_frame {
             encode_fn(ctx, frame);
         } else {
@@ -117,7 +120,7 @@ pub fn encode_jpeg(mut raw_buf: Vec<u8>, width: u32, height: u32, quality: u8, f
         }
         let pkt_ptr: *mut u8 = mpp_packet_get_pos(packet) as *mut u8;
         let pkt_len: usize = mpp_packet_get_length(packet);
-
+        // println!("Time processing {}", time.elapsed().as_millis());
         
         let data = std::slice::from_raw_parts(pkt_ptr, pkt_len).to_vec();
 
@@ -136,6 +139,7 @@ pub fn encode_jpeg(mut raw_buf: Vec<u8>, width: u32, height: u32, quality: u8, f
         if !ctx.is_null() {
             mpp_destroy(ctx);
         }
+        
         return Some(data);
     }
 }

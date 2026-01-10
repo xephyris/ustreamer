@@ -1,5 +1,5 @@
 use axum::{
-    body::{Body, BodyDataStream}, http::header::{CONTENT_TYPE, TRANSFER_ENCODING}, response::{Html, Response}, routing::get, Extension, Router
+    Extension, Router, body::{Body, BodyDataStream}, http::header::{CACHE_CONTROL, CONNECTION, CONTENT_TYPE, EXPIRES, PRAGMA, TRANSFER_ENCODING}, response::{Html, Response}, routing::get
 };
 use byteorder::LittleEndian;
 use bytes::Bytes;
@@ -132,10 +132,19 @@ async fn mjpeg_page(image: Extension<Arc<RwLock<ImageData>>>) -> Response {
             // sleep(Duration::from_millis(20)).await;
             if !image.read().await.skip {
                 let mut frame = Vec::new();
+                let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs_f64();
+                    
                 if let Some(img) = &image.read().await.frame {
                     let img = img.clone();
-                    frame.extend_from_slice(b"--frame\r\n");
-                    frame.extend_from_slice(b"Content-Type: image/jpeg\r\n\r\n");
+                    frame.extend_from_slice(format!(
+                            "--boundarydonotcross\r\n\
+                            Content-Type: image/jpeg\r\n\
+                            Content-Length: {}\r\n\
+                            X-Timestamp: {:.6}\r\n\r\n",
+                            // img.as_ref().map_or(0, |i| i.len()),
+                            img.len(),
+                            timestamp
+                        ).as_bytes());
                     frame.extend_from_slice(&img);
                     frame.extend_from_slice(b"\r\n");
 
@@ -163,7 +172,11 @@ async fn mjpeg_page(image: Extension<Arc<RwLock<ImageData>>>) -> Response {
 
     Response::builder()
         .status(200)
-        .header(CONTENT_TYPE, "multipart/x-mixed-replace; boundary=frame")
+        .header(CACHE_CONTROL, "no-store, no-cache, must-revalidate, proxy-revalidate, pre-check=0, post-check=0, max-age=0")
+        .header(PRAGMA, "no-cache")
+        .header(EXPIRES, "Mon, 3 Jan 2000 12:34:56 GMT")
+        .header(CONNECTION, "keep-alive")
+        .header(CONTENT_TYPE, "multipart/x-mixed-replace; boundary=boundarydonotcross")
         .header(TRANSFER_ENCODING, "chunked")
         .body(Body::from_stream(stream))
         .unwrap()
@@ -180,6 +193,7 @@ async fn mjpeg_stream(socket: Arc<RwLock<TcpStream>>, image: Arc<RwLock<ImageDat
         let mut start = Instant::now();
         if frames.elapsed() >= Duration::from_secs(1) {
             lock.client_fps.swap((lock.client_fps.load(std::sync::atomic::Ordering::Relaxed) + fps) / 2, std::sync::atomic::Ordering::Relaxed);
+            // println!("FPS : {}", lock.client_fps.load(std::sync::atomic::Ordering::Relaxed));
             fps = 0;
             frames = Instant::now();
         }
@@ -211,7 +225,7 @@ async fn mjpeg_stream(socket: Arc<RwLock<TcpStream>>, image: Arc<RwLock<ImageDat
             }
         }
         // println!("frame time {}", start.elapsed().as_millis());
-        sleep(Duration::from_millis(0)).await;
+        // sleep(Duration::from_millis(0)).await;
     }
 }
 
@@ -351,7 +365,7 @@ async fn connection_handler(stream: UnixStream, shared_clone: Arc<RwLock<ImageDa
                 // interval.tick().await;
                 count += 1;
 
-                if start.elapsed() > Duration::from_secs(1) {
+                if start.elapsed().as_millis() > 1000 {
                     println!("WEB SERVER FRAME TIME {}", avg_frame_time);
                     start = Instant::now();
                     client_clone.write().await.update_fps_from_header(line.clone(), fps);
