@@ -5,6 +5,7 @@ use tokio::{io::{AsyncReadExt, BufReader, Interest}, net::TcpStream, sync::RwLoc
 use futures::{Stream, StreamExt};
 
 pub mod client;
+pub mod unix;
 
 pub struct ImgStream {
     socket: Arc<RwLock<TcpStream>>,
@@ -22,7 +23,7 @@ impl ImgStream {
     pub fn get_stream(&mut self) -> impl Stream<Item = (Vec<u8>, Option<String>)> {
         self.counter += 1;
         futures::stream::unfold(
-            Arc::new(RwLock::new(StreamState {
+            Arc::new(RwLock::new(ImgStream {
                 socket: self.socket.clone(),
                 counter: 0,
             })),  
@@ -71,11 +72,6 @@ impl ImgStream {
         ).fuse()
     }
 
-}
-
-struct StreamState {
-    socket: Arc<RwLock<TcpStream>>,
-    counter: usize,
 }
 
 use std::sync::atomic::{AtomicUsize, Ordering};
