@@ -16,6 +16,8 @@ use chrono::format::strftime::StrftimeItems;
 
 // TODO: Change client_fps calculation to be performed in mjpeg stream loop?
 // TODO: Transition primites to `atomic` to ensure thread safety
+// TODO: Increase web server performance significantly
+// TODO: Migrate to UnixStream for Web Server Image Server sync instead of TcpStream
 
 
 // To send requests to socket
@@ -37,9 +39,8 @@ async fn main() {
     eprintln!("Removing old socket...");
     std::fs::remove_file(socket_path).ok();
 
-    let unix = false;
+    let unix = true;
     eprintln!("Binding to new socket");
-
 
     tokio::spawn(async move {
         attach_socket(shared).await;
@@ -387,7 +388,9 @@ async fn mjpeg_stream(socket: Arc<RwLock<TcpStream>>, image: Arc<RwLock<ImageDat
                 break;
             }
         }
-        // println!("frame time {}", start.elapsed().as_millis());
+        if let time = start.elapsed().as_millis() && time > 20 {
+            // println!("fetch mjpeg frame time {}", time);
+        }
         // sleep(Duration::from_millis(0)).await;
     }
 }

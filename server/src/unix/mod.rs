@@ -1,7 +1,9 @@
 
 use crate::{client::Clients, ImageData};
 use tokio::{io::{AsyncBufReadExt, AsyncWriteExt, BufReader}, net::UnixStream, sync::RwLock, time::sleep};
-use std::{sync::Arc, time::{Duration, Instant, SystemTime, UNIX_EPOCH}};
+use std::{io, os::fd::{AsFd, AsRawFd}, sync::Arc, time::{Duration, Instant, SystemTime, UNIX_EPOCH}};
+use nix::sys::socket::{setsockopt, sockopt::SndBuf};
+
 use axum::response::Json;
 use serde_json::json;
 
@@ -9,9 +11,11 @@ use chrono::Utc;
 use chrono::format::strftime::StrftimeItems;
 
 pub async fn connection_handler(stream: UnixStream, shared_clone: Arc<RwLock<ImageData>>, client_list: Arc<RwLock<Clients>>) {
+    increase_buf_size(&stream).ok();
     let (reader, mut writer) = stream.into_split();
     let mut buf_reader = BufReader::new(reader);
     let mut line = String::new();
+
     if buf_reader.read_line(&mut line).await.is_ok() {
         println!("{}", line);
         if line.starts_with("GET /snapshot HTTP/1.1") {
@@ -131,6 +135,7 @@ pub async fn connection_handler(stream: UnixStream, shared_clone: Arc<RwLock<Ima
                     let lock = tokio::time::timeout(Duration::from_millis(50), stream_shared.read()).await;
                     if let Ok(lock) = lock {
                         // println!("SKIP STATUS: {}", lock.skip);
+                        let frame_start = Instant::now();
                         if lock.skip == false {
                             skip = false;
                             let img = lock.frame.clone().unwrap();
@@ -168,6 +173,7 @@ pub async fn connection_handler(stream: UnixStream, shared_clone: Arc<RwLock<Ima
                         } else {
                             skip = true;
                         }
+                        // println!("Frame header gen processing time {} ", frame_start.elapsed().as_millis());
                     } else {
                         frame = prev_frame.as_ref().unwrap().clone();
                         // println!("using previous image because lock was not acquired");
@@ -177,22 +183,24 @@ pub async fn connection_handler(stream: UnixStream, shared_clone: Arc<RwLock<Ima
                 // println!("frame data ready and sending");
                 // println!("FRAMES RECIEVED AND PROCESSED COUNT:     {}", count);
                 if !skip {
+                    let frame_send = Instant::now();
                     df_frame_sent = false;
                     if let Err(e) = writer.write_all(&frame).await {
                         eprintln!("Failed connection, {}", e);
                         break;
                     }
+                    println!("Frame send writeall processing time {} with len {}", frame_send.elapsed().as_millis(), &frame.len());
                     if let Err(e) = writer.flush().await {
                         eprintln!("Failed flush, {}", e);
                         break;
                     }
-
-                    tokio::time::sleep(Duration::from_millis(10)).await;
+                    
+                    tokio::time::sleep(Duration::from_millis(70_u64.saturating_sub(frame_send.elapsed().as_millis() as u64))).await;
 
                     if first {
                         first = false;
                         if let Some(client) = client_clone.write().await.get_client_from_header(line.clone()) {
-                            client.update_fps(30);
+                            client.update_fps(fps);
                         } else {
                             break;
                         }
@@ -202,6 +210,7 @@ pub async fn connection_handler(stream: UnixStream, shared_clone: Arc<RwLock<Ima
                     } else {
                         avg_frame_time = frame_time.elapsed().as_millis();
                     } 
+                    // println!("Frame send processing time {} ", frame_send.elapsed().as_millis());
                 } else if !df_frame_sent && dual_final_frame && let Some(ref prev_frame) = prev_frame{
                     df_frame_sent = true;
                     if let Err(e) = writer.write_all(&prev_frame).await {
@@ -349,4 +358,9 @@ pub async fn connection_handler(stream: UnixStream, shared_clone: Arc<RwLock<Ima
             let _ = writer.write_all(b"HTTP/1.1 404 Not Found\r\n\r\n").await;
         }
     }
+}
+
+fn increase_buf_size(stream: &UnixStream) -> std::io::Result<()> {
+    let fs = stream.as_fd();
+    setsockopt(&fs, SndBuf, &(30000)).map_err(|e| std::io::Error::new(io::ErrorKind::Other, e))
 }
