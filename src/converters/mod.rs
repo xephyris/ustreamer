@@ -1,7 +1,7 @@
 use std::time::Instant;
 
 use crate::Color;
-use yuv::{BufferStoreMut, YuvBiPlanarImage, YuvBiPlanarImageMut, YuvConversionMode, YuvPlanarImage, YuvRange, YuvStandardMatrix, yuv_nv12_to_rgb, yuv_nv24_to_bgr, yuv_nv24_to_rgb, yuv420_to_rgb, yuyv422_to_rgb};
+use yuv::{BufferStoreMut, YuvBiPlanarImage, YuvBiPlanarImageMut, YuvConversionMode, YuvPackedImageMut, YuvPlanarImage, YuvPlanarImageMut, YuvRange, YuvStandardMatrix, yuv_nv12_to_rgb, yuv_nv24_to_bgr, yuv_nv24_to_rgb, yuv420_to_rgb, yuyv422_to_rgb, yuyv422_to_yuv420};
 
 #[cfg(rga_converter)] 
 pub mod rk_rga;
@@ -20,10 +20,10 @@ pub fn yuyv_to_rgb(y: i32, u:i32, v: i32) -> (u8, u8, u8){
 
 pub fn yuyv_to_rgb_yuv(buf: &[u8], width: u32, height: u32) -> Vec<u8> {
     let mut rgb_buf = vec![0u8; width as usize * height as usize * 3];
-            rgb_buf.resize(width as usize * height as usize * 3, 0);
+            // rgb_buf.resize(width as usize * height as usize * 3, 0);
 
         yuyv422_to_rgb(
-            &yuv::YuvPackedImage{yuy: &buf, yuy_stride: 7680, width:width as u32, height:height as u32},
+            &yuv::YuvPackedImage{yuy: &buf, yuy_stride: width * 2, width:width as u32, height:height as u32},
             &mut rgb_buf,
             width as u32 * 3,
             YuvRange::Limited,
@@ -32,6 +32,50 @@ pub fn yuyv_to_rgb_yuv(buf: &[u8], width: u32, height: u32) -> Vec<u8> {
         .unwrap();
         rgb_buf
 }
+
+pub fn yuyv_to_yuv420_yuv(buf: &[u8], width: u32, height: u32) -> Vec<u8> {
+    let mut yuv_buf = vec![0u8; width as usize * height as usize * 3 / 2];
+    let (y_plane, uv_plane) = yuv_buf.split_at_mut((width * height) as usize);
+    let (u_plane, v_plane) = uv_plane.split_at_mut((width * height) as usize / 4);
+    let mut yuv_planar = YuvPlanarImageMut {
+        y_plane: BufferStoreMut::Borrowed(y_plane),
+        y_stride: width,
+        u_plane: BufferStoreMut::Borrowed(u_plane),
+        u_stride: width / 2,
+        v_plane: BufferStoreMut::Borrowed(v_plane),
+        v_stride: width / 2,
+        width,
+        height,
+    };
+    yuyv422_to_yuv420(&mut yuv_planar, &yuv::YuvPackedImage{yuy: &buf, yuy_stride: width * 2, width:width as u32, height:height as u32}).expect("Image conversion failed YUYV to YUV420");
+    yuv_buf
+}
+
+pub fn yuv420_to_nv12_plane_interlacer(y_buf: &[u8], u_buf: &[u8], v_buf: &[u8], width: usize, height: usize) -> Vec<u8> {
+    let mut index = 0;
+    assert_eq!(u_buf.len(), v_buf.len());
+    let mut nv12_buf = vec![0u8; width * height * 3 / 2];
+    let (y_plane, uv_plane) = nv12_buf.split_at_mut(width * height);
+    y_plane.copy_from_slice(y_buf); 
+    while index < u_buf.len() {
+        uv_plane[index * 2] = u_buf[index];
+        uv_plane[index * 2 + 1] = v_buf[index];
+        index += 1;
+    }
+    nv12_buf
+}
+
+pub fn yuv420_to_nv12_interlacer(buf: &[u8], width: usize, height: usize) -> Vec<u8> {
+    let y_buf = &buf[0 ..  width * height];
+    let u_buf = &buf[width * height ..  width * height * 5/4];
+    let v_buf = &buf[width * height * 5/4 ..];
+    yuv420_to_nv12_plane_interlacer(y_buf, u_buf, v_buf, width, height)
+}
+
+pub fn yuyv422_to_nv12(buf: &[u8], width: u32, height: u32) -> Vec<u8>{
+    yuv420_to_nv12_interlacer(&yuyv_to_yuv420_yuv(buf, width, height), width as usize, height as usize)
+}
+
 
 pub fn nv12_to_rgb_yuv(buf: &[u8], width: usize, height: usize, rgb_buf: &mut Vec<u8>) {
     let wu32 = width as u32;

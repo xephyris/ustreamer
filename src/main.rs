@@ -408,15 +408,17 @@ fn encode_jpeg_mpp(data: PlaneMapping, width:usize, height: usize, pixelformat: 
     // let mut rgb_buf = vec![0u8; width as usize * height as usize * 3];
     if pixelformat == "NV12" {
         jpeg_data = rk_mpp::encode_jpeg(data.data.to_vec(), width as u32, height as u32, quality, StreamPixelFormat::NV12).unwrap();
-    }
-    
-    else if pixelformat == "BGR3" {
+    } else if pixelformat == "BGR3" {
         jpeg_data = rk_mpp::encode_jpeg(data.data.to_vec(), width as u32, height as u32, quality, StreamPixelFormat::BGR3).unwrap();
-    }
-
-    else if pixelformat == "NV24" {
+    } else if pixelformat == "NV24" {
         // std::fs::write("nv24.raw", data.data.to_vec()).unwrap();
         jpeg_data = rk_mpp::encode_jpeg(data.data.to_vec(), width as u32, height as u32, quality, StreamPixelFormat::NV24).unwrap();
+    } else if pixelformat == "YUYV" {
+        use ustreamer::converters::yuyv422_to_nv12;
+        let nv12 = yuyv422_to_nv12(&data.data.to_vec(), width as u32, height as u32);
+        jpeg_data = rk_mpp::encode_jpeg(nv12, width as u32, height as u32, quality, StreamPixelFormat::NV12).unwrap();
+    } else if pixelformat == "MJPG" {
+        jpeg_data = data.data.to_vec();
     }
     // println!("Frame processing time: {}", processing.elapsed().as_millis());
     jpeg_data
