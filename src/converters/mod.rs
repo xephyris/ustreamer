@@ -37,17 +37,19 @@ pub fn yuyv_to_yuv420_yuv(buf: &[u8], width: u32, height: u32) -> Vec<u8> {
     let mut yuv_buf = vec![0u8; width as usize * height as usize * 3 / 2];
     let (y_plane, uv_plane) = yuv_buf.split_at_mut((width * height) as usize);
     let (u_plane, v_plane) = uv_plane.split_at_mut((width * height) as usize / 4);
-    let mut yuv_planar = YuvPlanarImageMut {
-        y_plane: BufferStoreMut::Borrowed(y_plane),
+    
+    let mut yuv_planar = yuv::YuvPlanarImageMut {
+        y_plane: yuv::BufferStoreMut::Borrowed(y_plane),
         y_stride: width,
-        u_plane: BufferStoreMut::Borrowed(u_plane),
+        u_plane: yuv::BufferStoreMut::Borrowed(u_plane),
         u_stride: width / 2,
-        v_plane: BufferStoreMut::Borrowed(v_plane),
+        v_plane: yuv::BufferStoreMut::Borrowed(v_plane),
         v_stride: width / 2,
         width,
         height,
     };
-    yuyv422_to_yuv420(&mut yuv_planar, &yuv::YuvPackedImage{yuy: &buf, yuy_stride: width * 2, width:width as u32, height:height as u32}).expect("Image conversion failed YUYV to YUV420");
+    yuv::yuyv422_to_yuv420(&mut yuv_planar, &yuv::YuvPackedImage{yuy: &buf, yuy_stride: width * 2, width:width as u32, height:height as u32}).expect("Image conversion failed YUYV to YUV420");
+
     yuv_buf
 }
 
