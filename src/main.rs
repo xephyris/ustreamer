@@ -19,12 +19,15 @@ use v4l2r::ioctl::dqbuf;
 use v4l2r::{device::{DeviceConfig, Device, queue::Queue}, ioctl::{self, mmap, qbuf, reqbufs, GFmtError, MemoryConsistency, RequestBuffers, V4l2Buffer}, memory::MemoryType, Format, PixelFormat, QueueType,};
 use std::io::Write;
 use std::os::fd::{AsFd, AsRawFd};
+use std::os::unix::net::UnixListener;
 use std::path::Path;
 use std::sync::{Arc};
-use std::thread::JoinHandle;
-use std::time::Duration;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use std::fs::File;
+
+use std::os::unix::net::UnixStream;
+
+
 
 use tokio::sync::RwLock;
 
@@ -92,17 +95,23 @@ async fn image_server(mut path: String, skip: bool) {
     let encoder_fn: fn(PlaneMapping, usize, usize, &str, u8) -> Vec<u8> = if ENCODER == Encoder::CpuPool { ustreamer::cpu_pool::init_pool(); encode_jpeg_cpu_pool } else { encode_jpeg_cpu };
     let embedded = false;
 
+    let debug = false;
     let downscaling = false;
     let skip_repeats = skip;
 
     let shared = Arc::new(RwLock::new(ImageData::new())); 
     let shared_image_clone = shared.clone();
     let shared_clone = shared.clone();
-    
-    
-    let (listener, port) = bind_socket();
+
+
+    let socket_path = format!("{}/server/ustreamer_rs.sock", env!("CARGO_MANIFEST_DIR"));
+    eprintln!("Removing old socket...");
+    std::fs::remove_file(&socket_path).ok();
+    let listener = UnixListener::bind(socket_path).unwrap();
 
     let mut server_started = false;
+
+    let port = 7878;
     // Start client
     if embedded {
         init_axum_server(port, shared_clone.clone());
@@ -173,7 +182,7 @@ async fn image_server(mut path: String, skip: bool) {
     let timeout = Duration::from_secs(1);
     let mut last_check = Instant::now();
 
-    let mut stream = None;
+    let mut stream: Option<UnixStream> = None;
 
     let encoder = get_encoder();
 
@@ -183,8 +192,164 @@ async fn image_server(mut path: String, skip: bool) {
     let mut reset = false;
 
     let mut same = 0;
-    
-    loop {
+
+    if debug {
+        let debug_socket = format!("{}/server/debug_ustreamer.sock", env!("CARGO_MANIFEST_DIR"));
+        eprintln!("Removing old socket...");
+        std::fs::remove_file(&debug_socket).ok();
+        let debug_listener = UnixListener::bind(debug_socket).unwrap();
+        let mut debug_stream = None;
+        
+        loop {
+
+            let frame_time = Instant::now();
+            if reset {
+                ioctl::streamoff(&file, QueueType::VideoCaptureMplane).map_err(|e| eprintln!("Failed to stop stream: {e}")).ok();
+                format = ioctl::g_fmt(&file, QueueType::VideoCaptureMplane).map_err(|e| eprintln!("Failed to get stream format: {e}")).unwrap();
+                width = format.width as usize;
+                height = format.height as usize;
+                pixelformat = format.pixelformat.to_string();
+                
+                req = match reqbufs(&file, QueueType::VideoCaptureMplane, MemoryType::Mmap, buffer_count, MemoryConsistency::empty()) {
+                    Ok(req) => {
+                        reset = false;
+                        println!("Format: {:?}", format);
+                        req
+                    },
+                    Err(err) => {
+                        eprintln!("Failed to reset stream: {}", err);
+                        continue
+                    }
+                };
+                println!("Requested {} buffers",  req.count);
+                for i in 0..req.count {
+                    let buf = V4l2Buffer::new(q_type, i, MemoryType::Mmap);
+                    // unsafe {qbuf::<V4l2Buffer, V4l2Buffer>(&file, buf).map_err(|e| eprintln!("Failed to access buffers: {e}"))};
+                    unsafe { qbuf::<V4l2Buffer, V4l2Buffer>(&file, buf); }
+                }
+                streamon(&file, q_type).unwrap();
+            }
+
+            if debug_stream.as_ref().is_none() {
+                match debug_listener.accept() {
+                    Ok((stm, addr)) => {
+                        debug_stream.replace(stm);
+                        println!("Client connected: {:?}", addr);
+                    },
+                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                        std::thread::sleep(Duration::from_millis(50)); 
+                    },
+                    Err(e) => {
+                        eprintln!("Connection failed: {}", e);
+                    }
+                }
+                println!("looking for client");
+            }
+
+            if start.elapsed().as_millis() > 1000 {
+                println!("FPS: {} REPEATED FRAMES: {}", frames, rframes);
+                println!("Total Frames: {}", total_frames);
+                println!("Image SERVER Frame TIME {}", avg_frame_time);
+                if fps != 0 {
+                    fps = (fps + frames) / 2;
+                } else {
+                    fps = frames;
+                }
+                frames = 0;
+                rframes = 0;
+                start = Instant::now();
+            }
+            
+            let buf: V4l2Buffer;
+            // println!("Capture deq start frame time {}", frame_time.elapsed().as_millis());
+            if !(ENCODER == Encoder::CpuPool && ustreamer::cpu_pool::workers_full()) {
+                buf = match dqbuf(&file, q_type) {
+                    Ok(buf) => {
+                        buf
+                    },
+                    Err(e) => {
+                        eprintln!("{}", e);
+                        reset = true;
+                        continue
+                    }
+                };
+
+            } else {
+                continue
+            }
+            // println!("Capture deq frame time {}", frame_time.elapsed().as_millis());
+            
+            let plane = buf.get_first_plane();
+
+            // println!("Number of PLANES {}", buf.num_planes());
+            // println!("plane len: {}", plane.length);
+            let data = mmap(&filefd, if let Some(offset) = plane.data_offset {*offset} else {0}, *plane.length).unwrap();
+            if skip_repeats {
+                if embedded{
+                    if data.data == last_buf.as_slice() && frames % 3 == 0{
+                        same += 1;
+                        // println!("REPEATED FRAMES FOUND!!!");
+                        rframes += 1;
+                        let mut lock = shared_image_clone.write().await;
+                        lock.skip = true;
+                        continue
+                    } else if frames % 3 == 0{
+                        same = 0;
+                        last_buf = data.data.to_vec();
+                    }
+                } else {
+                    if data.data == last_buf.as_slice() && frames % 3 == 0 {
+                        same += 1; 
+                        println!("REPEATED FRAMES FOUND!!!");
+                        rframes += 1;
+                    } else if frames % 3 == 0{
+                        last_buf = data.data.to_vec();
+                        same = 0;
+                    }
+                }
+                if same > 10 {
+                    let mut lock = shared_image_clone.write().await;
+                    lock.skip = true;
+                }
+            }
+            // println!("Capture frame time {}", frame_time.elapsed().as_millis());
+            let mut jpeg_data = encoder_fn(data, width, height, &pixelformat, 80);
+            // println!("ENCODING TIME {} ", frame_time.elapsed().as_millis());
+            unsafe { qbuf::<V4l2Buffer, V4l2Buffer>(&file, buf); }
+
+            if !jpeg_data.is_empty() {
+
+                if let Some(debug_stream_unwrap) = debug_stream.as_mut() {
+                    if let Err(e) = debug_stream_unwrap.write_all(&jpeg_data) {
+                        debug_stream = None; 
+                        eprintln!("v0.1.0 stream dropped {}", e);
+                    }
+                }
+            }
+            if avg_frame_time != 0 {
+                // avg_frame_time = (avg_frame_time + frame_time.elapsed().as_millis())/2;
+            } else {
+                avg_frame_time = frame_time.elapsed().as_millis();
+            } 
+
+            if height > 1920 {
+                #[cfg(mpp_accel)]
+                std::thread::sleep(Duration::from_millis(0));
+            } else {
+                #[cfg(mpp_accel)]
+                std::thread::sleep(Duration::from_millis(30_u64.saturating_sub(frame_time.elapsed().as_millis() as u64)));
+
+                // if ENCODER == Encoder::CpuPool {
+                //     std::thread::sleep(Duration::from_millis(30_u64.saturating_sub(frame_time.elapsed().as_millis() as u64)));
+                // }
+            }
+
+            total_frames += 1;
+            // println!("Data length: {}", jpeg_data.len());
+            frames += 1;
+        }
+    } else {
+        loop {
 
         let frame_time = Instant::now();
         if reset {
@@ -221,7 +386,7 @@ async fn image_server(mut path: String, skip: bool) {
             match listener.accept() {
                 Ok((stm, addr)) => {
                     stream.replace(stm);
-                    println!("Client connected: {}", addr);
+                    println!("Client connected: {:?}", addr);
                 },
                 Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
                     if last_check.elapsed() >= timeout {
@@ -329,6 +494,7 @@ async fn image_server(mut path: String, skip: bool) {
                 //     lock.server_total_frames.swap(parts[5].parse::<usize>().unwrap_or(lock.server_total_frames.load(std::sync::atomic::Ordering::Relaxed)), std::sync::atomic::Ordering::Relaxed);
                 // }
 
+
                 if stream.is_some() {
                     let mut frame = Vec::new();
 
@@ -374,7 +540,8 @@ async fn image_server(mut path: String, skip: bool) {
                     stream.replace(open_stream);
                 }
                 // println!("frame {}", frame_time.elapsed().as_millis());
-                if avg_frame_time != 0 {
+            }
+            if avg_frame_time != 0 {
                     // avg_frame_time = (avg_frame_time + frame_time.elapsed().as_millis())/2;
                 } else {
                     avg_frame_time = frame_time.elapsed().as_millis();
@@ -392,11 +559,11 @@ async fn image_server(mut path: String, skip: bool) {
                     // }
                 }
 
-                total_frames += 1;
-                // println!("Data length: {}", jpeg_data.len());
-                frames += 1;
-            }
+            total_frames += 1;
+            // println!("Data length: {}", jpeg_data.len());
+            frames += 1;
         }
+    }
     }
 }
 

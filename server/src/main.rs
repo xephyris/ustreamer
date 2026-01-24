@@ -95,7 +95,7 @@ async fn attach_socket(image_data: Arc<RwLock<ImageData>>) {
     let shared_data = Arc::clone(&image_data);
     loop {
         let mut handle = None;
-        match TcpStream::connect("127.0.1.1:7878").await {
+        match UnixStream::connect(format!("{}/ustreamer_rs.sock", env!("CARGO_MANIFEST_DIR"))).await {
             Ok(found) => {
                 let socket = Arc::new(RwLock::new(found));
                 let clone = Arc::clone(&shared_data);
@@ -346,7 +346,7 @@ async fn mjpeg_page(req: Uri, image: Extension<Arc<RwLock<ImageData>>>, client_l
         .unwrap()
 }
 
-async fn mjpeg_stream(socket: Arc<RwLock<TcpStream>>, image: Arc<RwLock<ImageData>>) {
+async fn mjpeg_stream(socket: Arc<RwLock<UnixStream>>, image: Arc<RwLock<ImageData>>) {
     let mut net_fetcher = ImgStream::new(socket.clone());
     let mut stream= Box::pin(net_fetcher.get_stream());
     let mut fps = 0;

@@ -1,6 +1,6 @@
-use std::{sync::Arc};
+use std::sync::Arc;
 
-use tokio::{io::{AsyncReadExt, BufReader, Interest}, net::TcpStream, sync::RwLock};
+use tokio::{io::{AsyncReadExt, BufReader, Interest}, net::{TcpStream, UnixStream}, sync::RwLock};
 
 use futures::{Stream, StreamExt};
 
@@ -8,12 +8,12 @@ pub mod client;
 pub mod unix;
 
 pub struct ImgStream {
-    socket: Arc<RwLock<TcpStream>>,
+    socket: Arc<RwLock<UnixStream>>,
     counter: usize,
 }
 
 impl ImgStream {
-    pub fn new(socket: Arc<RwLock<TcpStream>>) -> Self {
+    pub fn new(socket: Arc<RwLock<UnixStream>>) -> Self {
         ImgStream { 
             socket, 
             counter: 0,
