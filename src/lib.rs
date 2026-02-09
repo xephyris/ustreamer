@@ -86,6 +86,8 @@ mod tests {
 
     use turbojpeg::{compress, Image, Subsamp};
 
+    use crate::converters::yuyv422_to_nv12;
+
 
     
     // use crate::rk_mpp;
@@ -129,7 +131,7 @@ mod tests {
         let width = 1920;
         let height = 1080;     
         let data = std::fs::read("test_buffer.nv12").unwrap();
-        let mut output = std::fs::File::create("test_encode_nv12.jpg").unwrap();  
+        let mut output = std::fs::File::create("new_test_encode_nv12.jpg").unwrap();  
         let mut rgb_buf = vec![0u8; width as usize * height as usize * 3];
         rgb_buf.resize(width as usize * height as usize * 3, 0);
         crate::converters::nv12_to_rgb_yuv(&data, width, height, &mut rgb_buf);
@@ -226,11 +228,20 @@ mod tests {
             "MJPG" => {
                 std::fs::File::create("test_buffer.jpg")
             }
+            "YUYV" => {
+                std::fs::File::create("test_buffer.nv12")
+            }
             _ => {
                 panic!("UNKNOWN FORMAT");
             }
         };
-        file.unwrap().write_all(&data.data);
+
+        if pixelformat.as_str() == "YUYV" {
+            eprintln!("Converting to NV12 before saving");
+            file.unwrap().write_all(&yuyv422_to_nv12(&data.data.to_vec(), width as u32, height as u32));
+        } else {
+            file.unwrap().write_all(&data.data);
+        }
         assert!(false);
     }
 

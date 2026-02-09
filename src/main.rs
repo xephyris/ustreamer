@@ -56,6 +56,10 @@ use ustreamer::rk_mpp;
 // export CPATH="/usr/include:/usr/include/aarch64-linux-gnu"
 // FFMPEG Recording :  ffmpeg -f v4l2 -pixel_format nv12 -video_size 1920x1080 -i /dev/video0        -c:v mjpeg -pix_fmt yuvj422p -f avi output1.avi
 
+// Remote stream debugging 
+// ssh -L 9000:/home/user/ustreamer/server/debug_ustreamer.sock user@address
+// ffplay -i tcp://127.0.0.1:9000
+
 const ENCODER: Encoder = Encoder::RockchipMpp; 
 
 #[tokio::main]
@@ -95,7 +99,7 @@ async fn image_server(mut path: String, skip: bool) {
     let encoder_fn: fn(PlaneMapping, usize, usize, &str, u8) -> Vec<u8> = if ENCODER == Encoder::CpuPool { ustreamer::cpu_pool::init_pool(); encode_jpeg_cpu_pool } else { encode_jpeg_cpu };
     let embedded = false;
 
-    let debug = false;
+    let debug = true;
     let downscaling = false;
     let skip_repeats = skip;
 
@@ -233,8 +237,10 @@ async fn image_server(mut path: String, skip: bool) {
             if debug_stream.as_ref().is_none() {
                 match debug_listener.accept() {
                     Ok((stm, addr)) => {
+                        increase_buf_size(&stm, width, height).ok();
                         debug_stream.replace(stm);
                         println!("Client connected: {:?}", addr);
+                        
                     },
                     Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
                         std::thread::sleep(Duration::from_millis(50)); 
@@ -285,7 +291,7 @@ async fn image_server(mut path: String, skip: bool) {
             // println!("plane len: {}", plane.length);
             let data = mmap(&filefd, if let Some(offset) = plane.data_offset {*offset} else {0}, *plane.length).unwrap();
             if skip_repeats {
-                if embedded{
+                if embedded{    
                     if data.data == last_buf.as_slice() && frames % 3 == 0{
                         same += 1;
                         // println!("REPEATED FRAMES FOUND!!!");
@@ -318,13 +324,14 @@ async fn image_server(mut path: String, skip: bool) {
             unsafe { qbuf::<V4l2Buffer, V4l2Buffer>(&file, buf); }
 
             if !jpeg_data.is_empty() {
-
+                let start_send = Instant::now();
                 if let Some(debug_stream_unwrap) = debug_stream.as_mut() {
                     if let Err(e) = debug_stream_unwrap.write_all(&jpeg_data) {
                         debug_stream = None; 
                         eprintln!("v0.1.0 stream dropped {}", e);
                     }
                 }
+                println!("Image send time: {}", start_send.elapsed().as_millis());
             }
             if avg_frame_time != 0 {
                 // avg_frame_time = (avg_frame_time + frame_time.elapsed().as_millis())/2;
@@ -712,6 +719,14 @@ fn init_axum_server(port: u32, shared: Arc<RwLock<ImageData>>) {
 
 fn get_encoder() -> String {
     ENCODER.to_string()
+}
+
+
+fn increase_buf_size(stream: &UnixStream, width: usize, height: usize) -> std::io::Result<()> {
+    use std::io;
+    use nix::sys::socket::{setsockopt, sockopt::SndBuf};
+    let fs = stream.as_fd();
+    setsockopt(&fs, SndBuf, &(width * height * 2)).map_err(|e| std::io::Error::new(io::ErrorKind::Other, e))
 }
 
 #[cfg(target_os="linux")]
