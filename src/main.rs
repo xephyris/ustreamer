@@ -99,7 +99,7 @@ async fn image_server(mut path: String, skip: bool) {
     let encoder_fn: fn(PlaneMapping, usize, usize, &str, u8) -> Vec<u8> = if ENCODER == Encoder::CpuPool { ustreamer::cpu_pool::init_pool(); encode_jpeg_cpu_pool } else { encode_jpeg_cpu };
     let embedded = false;
 
-    let debug = true;
+    let debug = false;
     let downscaling = false;
     let skip_repeats = skip;
 
@@ -392,6 +392,7 @@ async fn image_server(mut path: String, skip: bool) {
             }
             match listener.accept() {
                 Ok((stm, addr)) => {
+                    increase_buf_size(&stm, width, height).ok();
                     stream.replace(stm);
                     println!("Client connected: {:?}", addr);
                 },
