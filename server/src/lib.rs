@@ -6,6 +6,7 @@ use futures::{Stream, StreamExt};
 
 pub mod client;
 pub mod unix;
+pub mod axum_pages;
 
 pub struct ImgStream {
     socket: Arc<RwLock<UnixStream>>,
