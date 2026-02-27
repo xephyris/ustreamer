@@ -2,7 +2,7 @@ use axum::{
     Extension, Router, body::{Body, BodyDataStream}, http::{Uri, header::{CACHE_CONTROL, CONNECTION, CONTENT_TYPE, EXPIRES, PRAGMA, TRANSFER_ENCODING}}, response::{Html, Response}, routing::get
 };
 use server::{ImageData, ImgStream, axum_pages, client::Clients, unix};
-use tokio::{net::{TcpStream, UnixListener, UnixStream}, pin, sync::RwLock, time::sleep};
+use tokio::{io::AsyncReadExt, net::{TcpStream, UnixListener, UnixStream}, pin, sync::RwLock, time::sleep};
 use futures::stream::{self, StreamExt};
 
 use std::{io::Read, os::unix::fs::PermissionsExt, path::Path, sync::{mpsc, Arc}, time::{Duration, Instant, SystemTime, UNIX_EPOCH}};
@@ -28,7 +28,7 @@ use std::{io::Read, os::unix::fs::PermissionsExt, path::Path, sync::{mpsc, Arc},
 async fn main() {
     let shared = Arc::new(RwLock::new(ImageData::new())); 
     let shared_clone = Arc::clone(&shared);
-    
+
     let client_list =Arc::new(RwLock::new(Clients::new()));
     let socket_path = "/run/kvmd/ustreamer.sock"; 
     eprintln!("Removing old socket...");
@@ -92,10 +92,10 @@ async fn attach_socket(image_data: Arc<RwLock<ImageData>>) {
         let mut handle = None;
         match UnixStream::connect(format!("{}/ustreamer_rs.sock", env!("CARGO_MANIFEST_DIR"))).await {
             Ok(found) => {
-                let socket = Arc::new(RwLock::new(found));
+                // let socket = Arc::new(RwLock::new(found));
                 let clone = Arc::clone(&shared_data);
                 handle.replace(tokio::spawn(async move {
-                    mjpeg_stream(socket, clone).await;
+                    mjpeg_stream(found, clone).await;
                 }));
             }, 
             Err(_) => {
@@ -122,51 +122,99 @@ async fn attach_socket(image_data: Arc<RwLock<ImageData>>) {
 
 
 
-async fn mjpeg_stream(socket: Arc<RwLock<UnixStream>>, image: Arc<RwLock<ImageData>>) {
-    let mut net_fetcher = ImgStream::new(socket.clone());
-    let mut stream= Box::pin(net_fetcher.get_stream());
-    let mut fps = 0;
-    let mut frames = Instant::now();
+async fn mjpeg_stream(mut socket: UnixStream, image: Arc<RwLock<ImageData>>) {
     let mut missed = 0;
     loop {
+        let mut len_buf = [0u8; 8];
+        socket.read_exact(&mut len_buf).await.unwrap_or(0);
         let mut lock = image.write().await;
-        let mut start = Instant::now();
-        if frames.elapsed() >= Duration::from_secs(1) {
-            lock.client_fps.swap((lock.client_fps.load(std::sync::atomic::Ordering::Relaxed) + fps) / 2, std::sync::atomic::Ordering::Relaxed);
-            // println!("FPS : {}", lock.client_fps.load(std::sync::atomic::Ordering::Relaxed));
-            fps = 0;
-            frames = Instant::now();
-        }
-        if let Some(img_data) = stream.next().await{
-            if !img_data.0.is_empty() {
-                lock.frame = Some(img_data.0);
-            }
-            lock.client_total_frames.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            fps += 1;
-            missed = 0;
-            // println!("Frames recieved: {}", lock.client_total_frames.load(std::sync::atomic::Ordering::Relaxed));
-            if let Some(metadata) = img_data.1 {
-                let parts: Vec<&str> = metadata.split('x').collect();
-                if parts.len() == 7 {
-                    lock.width = parts[0].parse::<u32>().unwrap_or(lock.width);
-                    lock.height = parts[1].parse::<u32>().unwrap_or(lock.height);
-                    lock.format = parts[2].to_owned();
-                    lock.encoder = parts[3].to_owned();
-                    lock.server_fps.swap(parts[4].parse::<usize>().unwrap_or(lock.server_fps.load(std::sync::atomic::Ordering::Relaxed)), std::sync::atomic::Ordering::Relaxed);
-                    lock.server_total_frames.swap(parts[5].parse::<usize>().unwrap_or(lock.server_total_frames.load(std::sync::atomic::Ordering::Relaxed)), std::sync::atomic::Ordering::Relaxed);
-                    lock.skip = match parts[6] {"1" => true, _ => false};
+        let len = usize::from_be_bytes(len_buf);
+        if len < 10000*10000*3 {
+            let mut buffer = vec![0u8; len];
+            match socket.read_exact(&mut buffer).await {
+                Ok(n) if n > 0 => {
                 }
+                _ => {
+                    eprintln!("UnixStream read error");
+                },
             }
-        } else {
-            missed += 1;
-            println!("nothing recieved");
-            if missed > 100 {
-                break;
+
+            lock.frame = Some(buffer);
+            // let test_vec = std::fs::read("ustreaner.jpg").unwrap();
+
+            let mut metadata_buf = [0u8; 1024];
+            match socket.read_exact(&mut metadata_buf).await {
+                Ok(_status) => { 
+                    if metadata_buf[0] != 0 {
+                        let stripped = metadata_buf.into_iter().take_while(|&b| b != 0).collect::<Vec<u8>>();
+                        let metadata = String::from_utf8(stripped).unwrap_or_default();
+                        let parts: Vec<&str> = metadata.split('x').collect();
+                        if parts.len() == 7 {
+                            lock.width = parts[0].parse::<u32>().unwrap_or(lock.width);
+                            lock.height = parts[1].parse::<u32>().unwrap_or(lock.height);
+                            lock.format = parts[2].to_owned();
+                            lock.encoder = parts[3].to_owned();
+                            lock.server_fps.swap(parts[4].parse::<usize>().unwrap_or(lock.server_fps.load(std::sync::atomic::Ordering::Relaxed)), std::sync::atomic::Ordering::Relaxed);
+                            lock.server_total_frames.swap(parts[5].parse::<usize>().unwrap_or(lock.server_total_frames.load(std::sync::atomic::Ordering::Relaxed)), std::sync::atomic::Ordering::Relaxed);
+                            lock.skip = match parts[6] {"1" => true, _ => false};
+                        }
+                    }
+                }
+
+                Err(e) => {
+                    eprintln!("Error reading metadata {}", e);
+                }
+            
             }
         }
-        if let time = start.elapsed().as_millis() && time > 20 {
-            // println!("fetch mjpeg frame time {}", time);
-        }
-        // sleep(Duration::from_millis(0)).await;
     }
+
+
+
+    // let mut net_fetcher = ImgStream::new(Arc::new(RwLock::new(socket)));
+    // let mut stream= Box::pin(net_fetcher.get_stream());
+    // let mut fps = 0;
+    // let mut frames = Instant::now();
+    // let mut missed = 0;
+    // loop {
+    //     let mut lock = image.write().await;
+    //     let mut start = Instant::now();
+    //     if frames.elapsed() >= Duration::from_secs(1) {
+    //         lock.client_fps.swap((lock.client_fps.load(std::sync::atomic::Ordering::Relaxed) + fps) / 2, std::sync::atomic::Ordering::Relaxed);
+    //         // println!("FPS : {}", lock.client_fps.load(std::sync::atomic::Ordering::Relaxed));
+    //         fps = 0;
+    //         frames = Instant::now();
+    //     }
+    //     if let Some(img_data) = stream.next().await{
+    //         if !img_data.0.is_empty() {
+    //             lock.frame = Some(img_data.0);
+    //         }
+    //         lock.client_total_frames.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    //         fps += 1;
+    //         missed = 0;
+    //         // println!("Frames recieved: {}", lock.client_total_frames.load(std::sync::atomic::Ordering::Relaxed));
+    //         if let Some(metadata) = img_data.1 {
+    //             let parts: Vec<&str> = metadata.split('x').collect();
+    //             if parts.len() == 7 {
+    //                 lock.width = parts[0].parse::<u32>().unwrap_or(lock.width);
+    //                 lock.height = parts[1].parse::<u32>().unwrap_or(lock.height);
+    //                 lock.format = parts[2].to_owned();
+    //                 lock.encoder = parts[3].to_owned();
+    //                 lock.server_fps.swap(parts[4].parse::<usize>().unwrap_or(lock.server_fps.load(std::sync::atomic::Ordering::Relaxed)), std::sync::atomic::Ordering::Relaxed);
+    //                 lock.server_total_frames.swap(parts[5].parse::<usize>().unwrap_or(lock.server_total_frames.load(std::sync::atomic::Ordering::Relaxed)), std::sync::atomic::Ordering::Relaxed);
+    //                 lock.skip = match parts[6] {"1" => true, _ => false};
+    //             }
+    //         }
+    //     } else {
+    //         missed += 1;
+    //         println!("nothing recieved");
+    //         if missed > 100 {
+    //             break;
+    //         }
+    //     }
+    //     if let time = start.elapsed().as_millis() && time > 20 {
+    //         // println!("fetch mjpeg frame time {}", time);
+    //     }
+    //     // sleep(Duration::from_millis(0)).await;
+    // }
 }

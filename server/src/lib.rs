@@ -8,6 +8,7 @@ pub mod client;
 pub mod unix;
 pub mod axum_pages;
 
+// TODO: Deprecate ImgStream
 pub struct ImgStream {
     socket: Arc<RwLock<UnixStream>>,
     counter: usize,

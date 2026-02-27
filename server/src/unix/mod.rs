@@ -2,7 +2,7 @@
 use crate::{client::Clients, ImageData};
 use tokio::{io::{AsyncBufReadExt, AsyncWriteExt, BufReader}, net::UnixStream, sync::RwLock, time::sleep};
 use std::{io, os::fd::{AsFd, AsRawFd}, sync::Arc, time::{Duration, Instant, SystemTime, UNIX_EPOCH}};
-use nix::sys::socket::{setsockopt, sockopt::SndBuf};
+use nix::sys::socket::{setsockopt, sockopt::{RcvBuf, SndBuf}};
 
 use axum::response::Json;
 use serde_json::json;
@@ -11,7 +11,7 @@ use chrono::Utc;
 use chrono::format::strftime::StrftimeItems;
 
 pub async fn connection_handler(stream: UnixStream, shared_clone: Arc<RwLock<ImageData>>, client_list: Arc<RwLock<Clients>>) {
-    increase_buf_size(&stream).ok();
+    increase_buf_size(&stream, shared_clone.read().await.width, shared_clone.read().await.height).ok();
     let (reader, mut writer) = stream.into_split();
     let mut buf_reader = BufReader::new(reader);
     let mut line = String::new();
@@ -138,7 +138,7 @@ pub async fn connection_handler(stream: UnixStream, shared_clone: Arc<RwLock<Ima
                         let frame_start = Instant::now();
                         if lock.skip == false {
                             skip = false;
-                            let img = lock.frame.clone().unwrap();
+                            let img = lock.frame.clone().unwrap_or(Vec::new());
                             // println!("img length:{}", img.len());
                             // println!("img lock acquired parent {}/{}", _c_id.1, _c_id.0);
                             let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs_f64();
@@ -176,7 +176,7 @@ pub async fn connection_handler(stream: UnixStream, shared_clone: Arc<RwLock<Ima
                         // println!("Frame header gen processing time {} ", frame_start.elapsed().as_millis());
                     } else {
                         frame = prev_frame.as_ref().unwrap().clone();
-                        // println!("using previous image because lock was not acquired");
+                        println!("using previous image because lock was not acquired");
                     }
                 }
 
@@ -189,13 +189,15 @@ pub async fn connection_handler(stream: UnixStream, shared_clone: Arc<RwLock<Ima
                         eprintln!("Failed connection, {}", e);
                         break;
                     }
-                    println!("Frame send writeall processing time {} with len {}", frame_send.elapsed().as_millis(), &frame.len());
+                    
                     if let Err(e) = writer.flush().await {
                         eprintln!("Failed flush, {}", e);
                         break;
                     }
+
+                    println!("Frame send writeall + flush processing time {} with len {} frame num {}", frame_send.elapsed().as_millis(), &frame.len(), count);
                     
-                    tokio::time::sleep(Duration::from_millis(70_u64.saturating_sub(frame_send.elapsed().as_millis() as u64))).await;
+                    tokio::time::sleep(Duration::from_millis(30_u64.saturating_sub(frame_send.elapsed().as_millis() as u64))).await;
 
                     if first {
                         first = false;
@@ -224,6 +226,7 @@ pub async fn connection_handler(stream: UnixStream, shared_clone: Arc<RwLock<Ima
                 } else {
                     println!("Skipping identical frame");
                 }
+                println!("Total Frame time {}", frame_time.elapsed().as_millis());
             }
             client_clone.write().await.remove_client_from_header(line.clone());
         }  else if line.starts_with("GET /state") {
@@ -360,7 +363,8 @@ pub async fn connection_handler(stream: UnixStream, shared_clone: Arc<RwLock<Ima
     }
 }
 
-fn increase_buf_size(stream: &UnixStream) -> std::io::Result<()> {
-    let fs = stream.as_fd();
-    setsockopt(&fs, SndBuf, &(30000)).map_err(|e| std::io::Error::new(io::ErrorKind::Other, e))
+fn increase_buf_size(stream: &UnixStream, width: u32, height: u32,) -> std::io::Result<()> {
+    let fs = stream.as_fd(); 
+    setsockopt(&fs, SndBuf, &((width * height * 3) as usize)).map_err(|e| std::io::Error::new(io::ErrorKind::Other, e))
+    // setsockopt(&fs, RcvBuf, &((width * height * 2) as usize)).map_err(|e| std::io::Error::new(io::ErrorKind::Other, e))
 }
