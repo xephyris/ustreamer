@@ -6,6 +6,7 @@ pub mod rk_mpp;
 pub mod cpu_pool;
 pub mod error;
 pub mod config;
+pub mod ring;
 
 
 pub struct Color {
