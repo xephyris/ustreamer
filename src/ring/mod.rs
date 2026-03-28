@@ -62,6 +62,14 @@ impl RingBuffer {
         }
     }
 
+    pub fn remaining_capacity(&self) -> usize {
+        if self.read <= self.write {
+            self.size - (self.write - self.read)
+        } else {
+            self.read - self.write
+        }
+    }
+
     pub fn slots(&self) -> Vec<bool> {
         // println!("Write Head {} Read Head {}", self.write, self.read);
         let mut filled = vec![false; self.size];
