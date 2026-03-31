@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use clap::Parser;
 
 #[derive(Parser, Debug)]
@@ -18,4 +20,13 @@ pub struct Args {
 
     #[arg(long = "exit-on-parent-death")]
     pub exit_on_parent_death: bool,
+}
+
+pub struct StreamConfig {
+    pub width: usize,
+    pub height: usize,
+    pub embedded: bool,
+    pub port: u32,
+    pub timeout: Duration,
+    pub socket_path: String,
 }

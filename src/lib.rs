@@ -7,6 +7,7 @@ pub mod cpu_pool;
 pub mod error;
 pub mod config;
 pub mod ring;
+pub mod packet;
 
 
 pub struct Color {

@@ -9,7 +9,9 @@ use ustreamer::Encoder;
 use ustreamer::bind_socket;
 
 use ustreamer::config::Args;
+use ustreamer::config::StreamConfig;
 use ustreamer::lock::StreamLock;
+use ustreamer::packet::Packet;
 use ustreamer::ring::RingBuffer;
 use ustreamer::server;
 use ustreamer::server::img::ImageData;
@@ -22,7 +24,12 @@ use std::io::Write;
 use std::os::fd::{AsFd, AsRawFd};
 use std::os::unix::net::UnixListener;
 use std::path::Path;
+use std::sync::RwLock as SyncRwLock;
+use std::sync::mpsc;
+use std::sync::mpsc::Receiver;
+use std::sync::mpsc::Sender;
 use std::sync::{Arc};
+use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 use std::fs::File;
 
@@ -106,24 +113,16 @@ async fn image_server(mut path: String, skip: bool) {
     let downscaling = false;
     let skip_repeats = skip;
 
-    let shared = Arc::new(RwLock::new(ImageData::new())); 
-    let shared_image_clone = shared.clone();
-    let shared_clone = shared.clone();
+    
 
 
     let socket_path = format!("{}/server/ustreamer_rs.sock", env!("CARGO_MANIFEST_DIR"));
     eprintln!("Removing old socket...");
     std::fs::remove_file(&socket_path).ok();
-    let listener = UnixListener::bind(socket_path).unwrap();
-
-    let mut server_started = false;
+    
 
     let port = 7878;
-    // Start client
-    if embedded {
-        init_axum_server(port, shared_clone.clone());
-        server_started = true;
-    }
+    
 
     let dev = Device::open(&Path::new(&path), DeviceConfig::new()).map_err(|e| panic!("Failed to open device with error: {e}")).unwrap();
 
@@ -179,6 +178,18 @@ async fn image_server(mut path: String, skip: bool) {
     }
     streamon(&file, q_type).unwrap();
 
+
+    let timeout = Duration::from_secs(1);
+
+    let streamconfig = StreamConfig{
+        width,
+        height,
+        embedded,
+        port,
+        timeout,
+        socket_path,
+    };
+
     let mut frames = 0;
     let mut rframes = 0;
     let mut start = Instant::now();
@@ -188,10 +199,6 @@ async fn image_server(mut path: String, skip: bool) {
     let mut last_buf = vec![0u8; width as usize * height as usize * 3];
     last_buf.resize(width as usize * height as usize * 3, 0);
 
-    let timeout = Duration::from_secs(1);
-    let mut last_check = Instant::now();
-
-    let mut stream: Option<UnixStream> = None;
 
     let encoder = get_encoder();
 
@@ -201,6 +208,20 @@ async fn image_server(mut path: String, skip: bool) {
     let mut reset = false;
 
     let mut same = 0;
+
+    let mut packet = Packet {
+        frame: Vec::new(),
+        width,
+        height,
+        pixelformat: pixelformat.clone(),
+        encoder,
+        fps,
+        total_frames,
+        server_skip: 0,
+    };
+
+    let stream_status = Arc::new(SyncRwLock::new(false));
+    let mut stream_down_count = 0;
 
     if debug {
         let debug_socket = format!("{}/server/debug_ustreamer.sock", env!("CARGO_MANIFEST_DIR"));
@@ -296,32 +317,32 @@ async fn image_server(mut path: String, skip: bool) {
             // println!("plane len: {}", plane.length);
             let data = mmap(&filefd, if let Some(offset) = plane.data_offset {*offset} else {0}, *plane.length).unwrap();
             if skip_repeats {
-                if embedded{    
-                    if data.data == last_buf.as_slice() && frames % 3 == 0{
-                        same += 1;
-                        // println!("REPEATED FRAMES FOUND!!!");
-                        rframes += 1;
-                        let mut lock = shared_image_clone.write().await;
-                        lock.skip = true;
-                        continue
-                    } else if frames % 3 == 0{
-                        same = 0;
-                        last_buf = data.data.to_vec();
-                    }
-                } else {
-                    if data.data == last_buf.as_slice() && frames % 3 == 0 {
-                        same += 1; 
-                        println!("REPEATED FRAMES FOUND!!!");
-                        rframes += 1;
-                    } else if frames % 3 == 0{
-                        last_buf = data.data.to_vec();
-                        same = 0;
-                    }
-                }
-                if same > 10 {
-                    let mut lock = shared_image_clone.write().await;
-                    lock.skip = true;
-                }
+                // if embedded{    
+                //     if data.data == last_buf.as_slice() && frames % 3 == 0{
+                //         same += 1;
+                //         // println!("REPEATED FRAMES FOUND!!!");
+                //         rframes += 1;
+                //         let mut lock = shared_image_clone.write().await;
+                //         lock.skip = true;
+                //         continue
+                //     } else if frames % 3 == 0{
+                //         same = 0;
+                //         last_buf = data.data.to_vec();
+                //     }
+                // } else {
+                //     if data.data == last_buf.as_slice() && frames % 3 == 0 {
+                //         same += 1; 
+                //         println!("REPEATED FRAMES FOUND!!!");
+                //         rframes += 1;
+                //     } else if frames % 3 == 0{
+                //         last_buf = data.data.to_vec();
+                //         same = 0;
+                //     }
+                // }
+                // if same > 10 {
+                //     let mut lock = shared_image_clone.write().await;
+                //     lock.skip = true;
+                // }
             }
             // println!("Capture frame time {}", frame_time.elapsed().as_millis());
             let mut jpeg_data = encoder_fn(data, width, height, &pixelformat, 80);
@@ -366,6 +387,8 @@ async fn image_server(mut path: String, skip: bool) {
             frames += 1;
         }
     } else {
+        let (tx, rx) = mpsc::channel();
+        let stream_task = image_sender_task(rx, streamconfig, stream_status.clone());
         loop {
 
             let frame_time = Instant::now();
@@ -376,6 +399,10 @@ async fn image_server(mut path: String, skip: bool) {
                 height = format.height as usize;
                 pixelformat = format.pixelformat.to_string();
                 
+                packet.width = width;
+                packet.height = height;
+                packet.pixelformat = pixelformat.clone();
+
                 req = match reqbufs(&file, QueueType::VideoCaptureMplane, MemoryType::Mmap, buffer_count, MemoryConsistency::empty()) {
                     Ok(req) => {
                         reset = false;
@@ -396,29 +423,7 @@ async fn image_server(mut path: String, skip: bool) {
                 streamon(&file, q_type).unwrap();
             }
 
-            if stream.as_ref().is_none() {
-                if embedded && !server_started {
-                    init_axum_server(port, shared_clone.clone());
-                }
-                match listener.accept() {
-                    Ok((stm, addr)) => {
-                        increase_buf_size(&stm, width, height).ok();
-                        stream.replace(stm);
-                        println!("Client connected: {:?}", addr);
-                    },
-                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                        if last_check.elapsed() >= timeout {
-                            println!("No connections in last second");
-                            last_check = Instant::now();
-                        }
-                        std::thread::sleep(Duration::from_millis(50)); 
-                    },
-                    Err(e) => {
-                        eprintln!("Connection failed: {}", e);
-                    }
-                }
-                println!("looking for client");
-            } else {
+            if stream_down_count < 10 {
                 // println!("Start frame time {}", frame_time.elapsed().as_millis());
                 if start.elapsed().as_millis() > 1000 {
                     println!("FPS: {} REPEATED FRAMES: {}", frames, rframes);
@@ -465,8 +470,8 @@ async fn image_server(mut path: String, skip: bool) {
                             same += 1;
                             // println!("REPEATED FRAMES FOUND!!!");
                             rframes += 1;
-                            let mut lock = shared_image_clone.write().await;
-                            lock.skip = true;
+                            // let mut lock = shared_image_clone.write().await;
+                            // lock.skip = true;
                             continue
                         } else if frames % 3 == 0{
                             same = 0;
@@ -486,23 +491,134 @@ async fn image_server(mut path: String, skip: bool) {
                     }
                     if same > 10 {
                         server_skip = 1;
-                        let mut lock = shared_image_clone.write().await;
-                        lock.skip = true;
+                        // let mut lock = shared_image_clone.write().await;
+                        // lock.skip = true;
                     }
                 }
                 // println!("Capture frame time {}", frame_time.elapsed().as_millis());
                 let mut jpeg_data = encoder_fn(data, width, height, &pixelformat, 80);
-                if !jpeg_data.is_empty() {
-                    println!("Buffer capacity {}", ring.remaining_capacity());
-                    let val = ring.write(jpeg_data);
-                    if val.is_err() {
-                        println!("Ring buffer filled");
-                    }
-                }
+                packet.frame = jpeg_data;
+                packet.total_frames = total_frames;
+                packet.server_skip = server_skip;
+                packet.fps = fps;
+
+                tx.send(packet.clone());
 
                 // println!("ENCODING TIME {} ", frame_time.elapsed().as_millis());
                 unsafe { qbuf::<V4l2Buffer, V4l2Buffer>(&file, buf); }
 
+                if avg_frame_time != 0 {
+                        // avg_frame_time = (avg_frame_time + frame_time.elapsed().as_millis())/2;
+                    } else {
+                        avg_frame_time = frame_time.elapsed().as_millis();
+                    } 
+
+                    if height > 1920 {
+                        #[cfg(mpp_accel)]
+                        std::thread::sleep(Duration::from_millis(0));
+                    } else {
+                        // #[cfg(mpp_accel)]
+                        // std::thread::sleep(Duration::from_millis(30_u64.saturating_sub(frame_time.elapsed().as_millis() as u64)));
+
+                        // if ENCODER == Encoder::CpuPool {
+                        //     std::thread::sleep(Duration::from_millis(30_u64.saturating_sub(frame_time.elapsed().as_millis() as u64)));
+                        // }
+                    }
+
+                total_frames += 1;
+                // println!("Data length: {}", jpeg_data.len());
+                frames += 1;
+            } else {
+                match stream_status.read() {
+                    Ok(read) => {
+                        if *read {
+                            stream_down_count = 0;
+                        } else {
+                            stream_down_count += 1;
+                        }
+                    }
+                    Err(e) => {
+
+                    }
+                }
+                
+            }
+        }
+        stream_task.join();
+    }
+}
+
+fn image_sender_task(rx: Receiver<Packet>, stream_config: StreamConfig, stream_status: Arc<SyncRwLock<bool>>) -> JoinHandle<()> {
+    let mut ring = RingBuffer::new(4);
+    let mut stream: Option<UnixStream> = None;
+    let mut server_started = false;
+    let shared = Arc::new(RwLock::new(ImageData::new())); 
+    let shared_image_clone = shared.clone();
+    let shared_clone = shared.clone();
+    let listener = UnixListener::bind(stream_config.socket_path).unwrap();
+
+    let mut last_check = Instant::now();
+    // Start client
+    if stream_config.embedded {
+        init_axum_server(stream_config.port, shared_clone.clone());
+        server_started = true;
+    }
+    std::thread::spawn(move || {
+        loop {
+            if stream.as_ref().is_none() {
+                match stream_status.write() {
+                    Ok(mut write) => {
+                        *write = false;
+                    },
+                    Err(e) => {
+
+                    }
+                }
+                if stream_config.embedded && !server_started {
+                    init_axum_server(stream_config.port, shared_clone.clone());
+                }
+                match listener.accept() {
+                    Ok((stm, addr)) => {
+                        increase_buf_size(&stm, stream_config.width, stream_config.height).ok();
+                        stream.replace(stm);
+                        println!("Client connected: {:?}", addr);
+                    },
+                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                        if last_check.elapsed() >= stream_config.timeout {
+                            println!("No connections in last second");
+                            last_check = Instant::now();
+                        }
+                        std::thread::sleep(Duration::from_millis(50)); 
+                    },
+                    Err(e) => {
+                        eprintln!("Connection failed: {}", e);
+                    }
+                }
+                println!("looking for client");
+            } else {
+                match stream_status.write() {
+                    Ok(mut write) => {
+                        *write = true;
+                    },
+                    Err(e) => {
+
+                    }
+                }
+                let packet = match rx.try_recv() {
+                    Ok(data) => {data},
+                    Err(std::sync::mpsc::TryRecvError::Empty) => {
+                        Packet::default()
+                    },
+                    Err(std::sync::mpsc::TryRecvError::Disconnected) => break,
+                };
+                
+                if !packet.frame.is_empty() {
+                    println!("Buffer capacity {}", ring.remaining_capacity());
+                    let val = ring.write(packet.frame);
+                    if val.is_err() {
+                        println!("Ring buffer filled");
+                    }
+                }
                 if let Ok(jpeg_data) = ring.read() {
 
                     // let mut lock = shared_image_clone.write().await;
@@ -541,9 +657,16 @@ async fn image_server(mut path: String, skip: bool) {
                             continue
                         } 
 
-                        if total_frames % 10 == 0 {
+                        if packet.total_frames % 10 == 0 {
                             //Width x Height x Pixel Format x Encoder x Server FPS x Total Frames
-                            let mut stream_metadata = format!("{width}x{height}x{pixelformat}x{encoder}x{fps}x{total_frames}x{server_skip}").as_bytes().to_vec();
+                            let mut stream_metadata = format!("{}x{}x{}x{}x{}x{}x{}", 
+                                packet.width,
+                                packet.height,
+                                packet.pixelformat,
+                                packet.encoder,
+                                packet.fps,
+                                packet.total_frames,
+                                packet.server_skip).as_bytes().to_vec();
                             stream_metadata.resize(1024, 0u8);
                             // open_stream.write_all(&stream_metadata).unwrap();
                             frame.extend_from_slice(&stream_metadata);
@@ -560,37 +683,16 @@ async fn image_server(mut path: String, skip: bool) {
                         stream.replace(open_stream);
                     } else {
                         let mut open_stream = stream.take().unwrap();
-                        open_stream.write_all(format!("{}x{}x{}", width, height, width*height*3).as_bytes()).expect("Write Failed");
+                        open_stream.write_all(format!("{}x{}x{}", packet.width, packet.height, packet.width*packet.height*3).as_bytes()).expect("Write Failed");
                         open_stream.flush();
                         // metadata_sent = true;
                         stream.replace(open_stream);
                     }
                     // println!("frame {}", frame_time.elapsed().as_millis());
                 }
-                if avg_frame_time != 0 {
-                        // avg_frame_time = (avg_frame_time + frame_time.elapsed().as_millis())/2;
-                    } else {
-                        avg_frame_time = frame_time.elapsed().as_millis();
-                    } 
-
-                    if height > 1920 {
-                        #[cfg(mpp_accel)]
-                        std::thread::sleep(Duration::from_millis(0));
-                    } else {
-                        // #[cfg(mpp_accel)]
-                        // std::thread::sleep(Duration::from_millis(30_u64.saturating_sub(frame_time.elapsed().as_millis() as u64)));
-
-                        // if ENCODER == Encoder::CpuPool {
-                        //     std::thread::sleep(Duration::from_millis(30_u64.saturating_sub(frame_time.elapsed().as_millis() as u64)));
-                        // }
-                    }
-
-                total_frames += 1;
-                // println!("Data length: {}", jpeg_data.len());
-                frames += 1;
             }
         }
-    }
+    })
 }
 
 #[cfg(mpp_accel)]
