@@ -497,13 +497,13 @@ async fn image_server(mut path: String, skip: bool) {
                 }
                 // println!("Capture frame time {}", frame_time.elapsed().as_millis());
                 let mut jpeg_data = encoder_fn(data, width, height, &pixelformat, 80);
-                packet.frame = jpeg_data;
                 packet.total_frames = total_frames;
                 packet.server_skip = server_skip;
                 packet.fps = fps;
 
-                tx.send(packet.clone());
-
+                let start_send = Instant::now();
+                tx.send(Packet::clone_with_frame(&packet, jpeg_data));
+                println!("Frame send time {}", start_send.elapsed().as_millis());
                 // println!("ENCODING TIME {} ", frame_time.elapsed().as_millis());
                 unsafe { qbuf::<V4l2Buffer, V4l2Buffer>(&file, buf); }
 
@@ -549,7 +549,7 @@ async fn image_server(mut path: String, skip: bool) {
 }
 
 fn image_sender_task(rx: Receiver<Packet>, stream_config: StreamConfig, stream_status: Arc<SyncRwLock<bool>>) -> JoinHandle<()> {
-    let mut ring = RingBuffer::new(4);
+    let mut ring = RingBuffer::new(2);
     let mut stream: Option<UnixStream> = None;
     let mut server_started = false;
     let shared = Arc::new(RwLock::new(ImageData::new())); 
