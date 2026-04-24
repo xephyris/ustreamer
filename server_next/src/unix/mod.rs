@@ -79,7 +79,7 @@ pub async fn connection_handler(stream: UnixStream, image_stream: Sender<Arc<Ima
             let mut img_data = rx.recv().await.unwrap_or(Arc::new(Image::new(Bytes::new())));
             let mut last_frame_time = Instant::now();
             loop {
-                println!("LOOP RESTARTED");
+                // println!("LOOP RESTARTED");
                 let start_send = Instant::now();
                 tokio::time::timeout(Duration::from_millis(50), client_tx.send(ClientMessage::Update(uuid.clone(), ClientState::BUSY))).await;
                 tokio::task::yield_now().await;
@@ -168,7 +168,7 @@ pub async fn connection_handler(stream: UnixStream, image_stream: Sender<Arc<Ima
                     println!("CHECKING WRITEABLE");
                     if let Ok(Ok(_)) = tokio::time::timeout(Duration::from_millis(2), writer.writable()).await {
                         println!("STREAM WRITEABLE");
-                        if let Err(e) = writer.try_write(&frame) {
+                        if let Err(e) = writer.write_all(&frame).await {
                             eprintln!("Failed conneciton, {}", e);
                             continue;
                         }

@@ -107,7 +107,7 @@ async fn attach_socket(image_tx: Sender<Arc<Image>>, metadata: Arc<RwLock<ImageM
 async fn mjpeg_stream(mut socket: UnixStream, image_sender: Sender<Arc<Image>>, metadata: Arc<RwLock<ImageMetaData>>, rx: Arc<Mutex<Receiver<ClientMessage>>>, loop_rx: Receiver<bool>) {
     let mut missed = 0;
     let mut start = Instant::now();
-    let ring_buffer = Arc::new(Mutex::new(RingBuffer::new(30)));
+    let ring_buffer = Arc::new(Mutex::new(RingBuffer::new(15)));
     let ring_clone = ring_buffer.clone();
     println!("SPAWNING CLIENT POLLING"); 
     tokio::spawn(async move {
@@ -115,6 +115,7 @@ async fn mjpeg_stream(mut socket: UnixStream, image_sender: Sender<Arc<Image>>, 
     });
     let mut invalid_metadata_count = 0;
     let mut invalid_socket_read = 0;
+    drain_socket(&socket);
     loop {
         let mut len_buf = [0u8; 8];
         socket.read_exact(&mut len_buf).await.unwrap_or(0);
